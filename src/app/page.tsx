@@ -1,5 +1,7 @@
 import React from 'react'
 import { getServerSideURL } from '@/utilities/getURL'
+import { getPayload } from 'payload'
+import config from '@payload-config'
 
 const ENV = process.env.NODE_ENV || 'development'
 const VERSION = process.env.npm_package_version || '1.0.0'
@@ -28,12 +30,10 @@ const externalLinks = [
   { name: 'GitHub', url: 'https://github.com/Aurelmax/vanalexcars-cms', description: 'Repository backend' },
 ]
 
-async function getHealthStatus(baseURL: string): Promise<boolean> {
+async function getHealthStatus(): Promise<boolean> {
   try {
-    const res = await fetch(`${baseURL}/api/health`, {
-      cache: 'no-store',
-    })
-    return res.ok
+    await getPayload({ config })
+    return true
   } catch {
     return false
   }
@@ -43,7 +43,7 @@ export const dynamic = 'force-dynamic'
 
 export default async function PortalPage() {
   const baseURL = getServerSideURL()
-  const isHealthy = await getHealthStatus(baseURL)
+  const isHealthy = await getHealthStatus()
 
   return (
     <div style={styles.body}>
