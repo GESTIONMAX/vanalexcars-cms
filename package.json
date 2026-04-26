@@ -1,0 +1,63 @@
+{
+  "name": "vanalexcars-backend",
+  "version": "1.0.0",
+  "description": "VanalexCars Backend API - Payload CMS v3 Headless",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "payload migrate && cross-env NODE_OPTIONS=--no-deprecation next build",
+    "dev": "cross-env NODE_OPTIONS=--no-deprecation next dev -p 4200",
+    "dev:prod": "cross-env NODE_OPTIONS=--no-deprecation rm -rf .next && pnpm build && pnpm start",
+    "generate:importmap": "cross-env NODE_OPTIONS=--no-deprecation payload generate:importmap",
+    "generate:types": "cross-env NODE_OPTIONS=--no-deprecation payload generate:types",
+    "lint": "cross-env NODE_OPTIONS=--no-deprecation next lint",
+    "lint:fix": "cross-env NODE_OPTIONS=--no-deprecation next lint --fix",
+    "payload": "cross-env NODE_OPTIONS=--no-deprecation payload",
+    "reinstall": "cross-env NODE_OPTIONS=--no-deprecation rm -rf node_modules && rm pnpm-lock.yaml && pnpm --ignore-workspace install",
+    "start": "cross-env NODE_OPTIONS=--no-deprecation next start"
+  },
+  "dependencies": {
+    "@payloadcms/db-mongodb": "3.59.1",
+    "@payloadcms/next": "3.59.1",
+    "@payloadcms/payload-cloud": "3.59.1",
+    "@payloadcms/plugin-form-builder": "3.59.1",
+    "@payloadcms/plugin-nested-docs": "3.59.1",
+    "@payloadcms/plugin-seo": "3.59.1",
+    "@payloadcms/richtext-lexical": "3.59.1",
+    "@payloadcms/ui": "3.59.1",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "cross-env": "^7.0.3",
+    "graphql": "^16.9.0",
+    "jsonwebtoken": "9.0.2",
+    "next": "^15.5.4",
+    "payload": "3.59.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "sharp": "^0.34.4"
+  },
+  "devDependencies": {
+    "@next/eslint-plugin-next": "^13.5.7",
+    "@payloadcms/eslint-config": "^1.1.1",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "22.5.4",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "^15.5.4",
+    "prettier": "^3.4.2",
+    "typescript": "5.7.2"
+  },
+  "engines": {
+    "node": "^18.20.2 || >=20.9.0"
+  },
+  "pnpm": {
+    "ignoredBuiltDependencies": [
+      "esbuild",
+      "sharp",
+      "unrs-resolver"
+    ],
+    "overrides": {
+      "@types/react": "^19.0.0",
+      "@types/react-dom": "^19.0.0"
+    }
+  }
+}
