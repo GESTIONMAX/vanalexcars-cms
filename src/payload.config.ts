@@ -35,18 +35,18 @@ export default buildConfig({
   collections: [Pages, Posts, Media, Categories, Users, Comments, Vehicles],
   cors: [
     getServerSideURL(),
-    'http://localhost:3001',              // Frontend local (dev)
-    'http://localhost:3000',              // Frontend local alternatif
-    'https://vanalexcars.vercel.app',     // Frontend Vercel (prod)
-    'https://*.vercel.app',               // Tous les déploiements preview Vercel
-  ].filter(Boolean),
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'https://api.import-voiture-allemagne.fr',
+    process.env.FRONTEND_URL,
+  ].filter((v): v is string => Boolean(v)),
   csrf: [
     getServerSideURL(),
-    'http://localhost:3001',              // Frontend local (dev)
-    'http://localhost:3000',              // Frontend local alternatif
-    'https://vanalexcars.vercel.app',     // Frontend Vercel (prod)
-    'https://*.vercel.app',               // Tous les déploiements preview Vercel
-  ].filter(Boolean),
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'https://api.import-voiture-allemagne.fr',
+    process.env.FRONTEND_URL,
+  ].filter((v): v is string => Boolean(v)),
   globals: [Header, Footer],
   plugins: [
     ...plugins,
