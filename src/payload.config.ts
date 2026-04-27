@@ -38,6 +38,8 @@ export default buildConfig({
     'http://localhost:3000',
     'http://localhost:3001',
     'https://api.import-voiture-allemagne.fr',
+    'https://vanalexcars.netlify.app',
+    'https://www.import-voiture-allemagne.fr',
     process.env.FRONTEND_URL,
   ].filter((v): v is string => Boolean(v)),
   csrf: [
@@ -45,6 +47,8 @@ export default buildConfig({
     'http://localhost:3000',
     'http://localhost:3001',
     'https://api.import-voiture-allemagne.fr',
+    'https://vanalexcars.netlify.app',
+    'https://www.import-voiture-allemagne.fr',
     process.env.FRONTEND_URL,
   ].filter((v): v is string => Boolean(v)),
   globals: [Header, Footer],
