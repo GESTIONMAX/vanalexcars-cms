@@ -15,6 +15,9 @@ COPY . .
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+# Dummy values for build-time only (Payload config needs these to compile)
+ENV PAYLOAD_SECRET=build-time-dummy-secret-not-used-at-runtime
+ENV DATABASE_URI=mongodb://localhost/dummy
 
 RUN pnpm build
 
