@@ -406,17 +406,21 @@ export const Vehicles: CollectionConfig = {
   hooks: {
     afterRead: [
       ({ doc }) => {
+        const serverURL = process.env.PAYLOAD_PUBLIC_SERVER_URL || 'http://localhost:4200';
+        const fixUrl = (url: string): string =>
+          url.replace(/^https?:\/\/localhost:4200/, serverURL);
+
         // Priorité aux images traitées (Studio) si elles existent
         if (doc.processedImages?.card) {
           // Utiliser les images studio (card pour le catalogue, hero pour les détails)
-          doc.mainImage = doc.processedImages.card; // Card optimisée pour vignettes
-          doc.heroImage = doc.processedImages.hero; // Hero pour page de détail
+          doc.mainImage = fixUrl(doc.processedImages.card); // Card optimisée pour vignettes
+          doc.heroImage = doc.processedImages.hero ? fixUrl(doc.processedImages.hero) : null;
           doc.galleryImages = [
             doc.processedImages.hero,
             doc.processedImages.card,
             doc.processedImages.thumbnail,
             doc.processedImages.social,
-          ].filter(Boolean);
+          ].filter(Boolean).map(fixUrl);
         } else if (doc.imageUrls?.length > 0) {
           // Fallback sur les images brutes ImporteMoi
           doc.mainImage = doc.imageUrls[0].url;
