@@ -341,6 +341,14 @@ export const Vehicles: CollectionConfig = {
       },
     },
     {
+      name: 'originalListingUrl',
+      type: 'text',
+      admin: {
+        description: 'URL de la fiche individuelle sur AutoScout24 (pour enrichissement 2ème passe)',
+        position: 'sidebar',
+      },
+    },
+    {
       name: 'sourcePlatform',
       type: 'text',
       admin: {
