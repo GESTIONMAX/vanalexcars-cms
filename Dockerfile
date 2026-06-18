@@ -54,6 +54,10 @@ COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
+# Scripts standalone (sync AS24, etc.) — node_modules complets + sources
+COPY --from=deps --chown=nextjs:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=nextjs:nodejs /app/src/scripts ./src/scripts
+
 USER nextjs
 
 EXPOSE 4200
