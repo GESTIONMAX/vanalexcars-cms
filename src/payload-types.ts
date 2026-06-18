@@ -788,7 +788,32 @@ export interface Vehicle {
   /**
    * Marque du véhicule
    */
-  brand: 'audi' | 'bmw' | 'mercedes' | 'porsche' | 'volkswagen' | 'mini' | 'other';
+  brand:
+    | 'audi'
+    | 'bmw'
+    | 'mercedes'
+    | 'porsche'
+    | 'volkswagen'
+    | 'mini'
+    | 'alfa-romeo'
+    | 'aston-martin'
+    | 'bentley'
+    | 'ferrari'
+    | 'ford'
+    | 'jaguar'
+    | 'lamborghini'
+    | 'land-rover'
+    | 'lexus'
+    | 'maserati'
+    | 'mazda'
+    | 'mclaren'
+    | 'mg'
+    | 'opel'
+    | 'renault'
+    | 'rolls-royce'
+    | 'toyota'
+    | 'volvo'
+    | 'other';
   /**
    * Modèle du véhicule
    */
@@ -912,6 +937,10 @@ export interface Vehicle {
    * URL de l'annonce source
    */
   sourceUrl?: string | null;
+  /**
+   * URL de la fiche individuelle sur AutoScout24 (pour enrichissement 2ème passe)
+   */
+  originalListingUrl?: string | null;
   /**
    * Plateforme source (importemoi.fr, autoscout24.de, etc.)
    */
@@ -1433,6 +1462,7 @@ export interface VehiclesSelect<T extends boolean = true> {
   externalId?: T;
   externalReference?: T;
   sourceUrl?: T;
+  originalListingUrl?: T;
   sourcePlatform?: T;
   publishedDate?: T;
   lastScrapedAt?: T;
