@@ -214,6 +214,8 @@ export const Vehicles: CollectionConfig = {
         { label: 'Actif', value: 'active' },
         { label: 'Vendu', value: 'sold' },
         { label: 'Réservé', value: 'reserved' },
+        { label: 'Inactif (annonce expirée)', value: 'inactive' },
+        { label: 'À vérifier', value: 'to_review' },
       ],
       admin: {
         description: 'Statut du véhicule',
@@ -369,6 +371,23 @@ export const Vehicles: CollectionConfig = {
       type: 'date',
       admin: {
         description: 'Date de la dernière mise à jour par le scraper (pour détection véhicules obsolètes)',
+        position: 'sidebar',
+      },
+    },
+    {
+      name: 'syncErrorCount',
+      type: 'number',
+      defaultValue: 0,
+      admin: {
+        description: 'Nombre d\'échecs consécutifs de vérification AS24 (timeout / erreur réseau)',
+        position: 'sidebar',
+      },
+    },
+    {
+      name: 'syncErrorSince',
+      type: 'date',
+      admin: {
+        description: 'Date du premier échec consécutif en cours (réinitialisé à chaque succès)',
         position: 'sidebar',
       },
     },

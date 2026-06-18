@@ -877,7 +877,7 @@ export interface Vehicle {
   /**
    * Statut du véhicule
    */
-  status: 'active' | 'sold' | 'reserved';
+  status: 'active' | 'sold' | 'reserved' | 'inactive' | 'to_review';
   /**
    * Couleur extérieure
    */
@@ -953,6 +953,14 @@ export interface Vehicle {
    * Date de la dernière mise à jour par le scraper (pour détection véhicules obsolètes)
    */
   lastScrapedAt?: string | null;
+  /**
+   * Nombre d'échecs consécutifs de vérification AS24 (timeout / erreur réseau)
+   */
+  syncErrorCount?: number | null;
+  /**
+   * Date du premier échec consécutif en cours (réinitialisé à chaque succès)
+   */
+  syncErrorSince?: string | null;
   /**
    * URLs des images du véhicule (générées depuis ImporteMoi)
    */
@@ -1466,6 +1474,8 @@ export interface VehiclesSelect<T extends boolean = true> {
   sourcePlatform?: T;
   publishedDate?: T;
   lastScrapedAt?: T;
+  syncErrorCount?: T;
+  syncErrorSince?: T;
   imageUrls?:
     | T
     | {
