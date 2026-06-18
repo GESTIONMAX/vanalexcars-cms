@@ -1,4 +1,22 @@
-FROM node:20-alpine AS base
+FROM node:20-slim AS base
+RUN apt-get update && apt-get install -y \
+    chromium \
+    libgbm1 \
+    libnss3 \
+    libatk-bridge2.0-0 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libgtk-3-0 \
+    libasound2 \
+    --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 
 # --- Dependencies ---
@@ -25,6 +43,7 @@ RUN pnpm build
 FROM base AS runner
 WORKDIR /app
 
+ENV HOME=/tmp
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
