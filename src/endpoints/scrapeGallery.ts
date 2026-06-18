@@ -70,9 +70,11 @@ export const scrapeGalleryHandler: PayloadHandler = async (req): Promise<Respons
       'Accept-Language': 'de-DE,de;q=0.9,fr;q=0.8',
     })
 
-    // Regex CDN AS24 — toutes les images listing pleine résolution
+    // Regex CDN AS24 — capture uniquement les URLs de base (sans suffixe de taille)
+    // Format AS24 : /listing-images/{listing-uuid}_{image-uuid}.jpg
+    // On ignore les variantes avec suffixe (/120x90.jpg, /1920x1080.webp, etc.)
     const cdnPattern =
-      /https:\/\/prod\.pictures\.autoscout24\.net\/listing-images\/[a-f0-9-]+_[a-f0-9-]+\.jpg/gi
+      /https:\/\/prod\.pictures\.autoscout24\.net\/listing-images\/[a-f0-9-]+_[a-f0-9-]+\.jpg(?!\/)/gi
 
     // Passe 0 : intercepter les réponses réseau JSON avant navigation
     // AS24 appelle son API interne pour charger la fiche (toutes les photos incluses)
@@ -151,9 +153,10 @@ export const scrapeGalleryHandler: PayloadHandler = async (req): Promise<Respons
       )
     }
 
-    // Filtrer les thumbnails (URLs terminant par _100.jpg, _200.jpg, etc.)
-    const fullSize = imageUrls.filter((u) => !u.match(/_\d{1,3}\.(jpg|jpeg|webp)$/i))
-    const finalUrls = fullSize.length ? fullSize : imageUrls
+    // Garder uniquement les URLs CDN listing-images (exclure assets, logos, icônes)
+    const finalUrls = imageUrls.filter((u) =>
+      u.includes('prod.pictures.autoscout24.net/listing-images/'),
+    )
 
     if (!finalUrls.length) {
       return Response.json({ error: 'No images found at listing URL' }, { status: 502 })
