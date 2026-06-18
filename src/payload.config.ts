@@ -17,6 +17,7 @@ import { plugins } from './plugins'
 import { defaultLexical } from '@/fields/defaultLexical'
 import { getServerSideURL } from './utilities/getURL'
 import { scrapeGalleryHandler } from './endpoints/scrapeGallery'
+import { enrichVehicleHandler } from './endpoints/enrichVehicle'
 
 const filename = fileURLToPath(import.meta.url)
 const dirname = path.dirname(filename)
@@ -69,6 +70,11 @@ export default buildConfig({
       path: '/scrape-gallery',
       method: 'post',
       handler: scrapeGalleryHandler,
+    },
+    {
+      path: '/enrich-vehicle',
+      method: 'post',
+      handler: enrichVehicleHandler,
     },
   ],
   secret: process.env.PAYLOAD_SECRET,

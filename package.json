@@ -17,7 +17,9 @@
     "reinstall": "cross-env NODE_OPTIONS=--no-deprecation rm -rf node_modules && rm pnpm-lock.yaml && pnpm --ignore-workspace install",
     "start": "cross-env NODE_OPTIONS=--no-deprecation next start",
     "sync:as24-status": "node --env-file=.env --no-deprecation --import tsx/esm src/scripts/sync-as24-status.ts",
-    "sync:as24-status:dry": "node --env-file=.env --no-deprecation --import tsx/esm src/scripts/sync-as24-status.ts --dry-run"
+    "sync:as24-status:dry": "node --env-file=.env --no-deprecation --import tsx/esm src/scripts/sync-as24-status.ts --dry-run",
+    "bulk-enrich": "node --env-file=.env --no-deprecation --import tsx/esm src/scripts/bulk-enrich.ts",
+    "bulk-enrich:dry": "node --env-file=.env --no-deprecation --import tsx/esm src/scripts/bulk-enrich.ts --dry-run"
   },
   "dependencies": {
     "@payloadcms/db-mongodb": "3.84.1",

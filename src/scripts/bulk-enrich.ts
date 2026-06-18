@@ -1,0 +1,180 @@
+/**
+ * bulk-enrich.ts
+ *
+ * Enrichissement en masse des fiches véhicules AutoScout24.
+ * Pour chaque véhicule actif avec `originalListingUrl`, visite la fiche
+ * individuelle AS24 via Playwright et récupère images + données texte.
+ *
+ * Règles de mise à jour :
+ *   - Images    : enrichies seulement si le compte actuel est inférieur à ce qu'on trouve
+ *   - Texte     : ajouté seulement si le champ est vide en base (pas d'écrasement)
+ *   - Statut    : jamais modifié par ce script
+ *
+ * Flags :
+ *   --dry-run          Aucune écriture en base, affiche seulement ce qui serait fait
+ *   --limit N          Traiter au maximum N véhicules (défaut : 200)
+ *   --min-images N     Traiter seulement les véhicules avec < N images (défaut : 5)
+ *   --delay-ms N       Délai entre deux véhicules en ms (défaut : 8000)
+ *
+ * Usage :
+ *   node --no-deprecation --import tsx/esm /app/src/scripts/bulk-enrich.ts
+ *   node --no-deprecation --import tsx/esm /app/src/scripts/bulk-enrich.ts --dry-run --limit 10
+ */
+
+import { getPayload } from 'payload'
+import config from '../payload.config.js'
+import { enrichAs24Listing } from '../lib/enrichAs24Listing.js'
+
+// ── Paramètres CLI ────────────────────────────────────────────────────────────
+
+const args = process.argv.slice(2)
+const DRY_RUN = args.includes('--dry-run') || args.includes('--dry')
+const LIMIT = parseInt(args[args.indexOf('--limit') + 1] ?? '200', 10) || 200
+const MIN_IMAGES = parseInt(args[args.indexOf('--min-images') + 1] ?? '5', 10) || 5
+const DELAY_MS = parseInt(args[args.indexOf('--delay-ms') + 1] ?? '8000', 10) || 8000
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function log(msg: string) {
+  console.log(`[bulk-enrich] ${msg}`)
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+
+async function main() {
+  log(`Mode       : ${DRY_RUN ? 'DRY-RUN (aucune écriture)' : 'LIVE'}`)
+  log(`Limite     : ${LIMIT} véhicules`)
+  log(`Min images : < ${MIN_IMAGES} images dans la fiche`)
+  log(`Délai      : ${DELAY_MS} ms entre chaque`)
+  log('─────────────────────────────────────')
+
+  const payload = await getPayload({ config })
+
+  // Récupérer les véhicules actifs avec originalListingUrl
+  const { docs: vehicles } = await payload.find({
+    collection: 'vehicles',
+    where: {
+      and: [
+        { status: { equals: 'active' } },
+        { originalListingUrl: { exists: true } },
+        { originalListingUrl: { not_equals: '' } },
+      ],
+    },
+    limit: 500,
+    pagination: false,
+  })
+
+  // Filtrer ceux qui ont moins de MIN_IMAGES images
+  const toEnrich = vehicles
+    .filter((v) => (v.imageUrls?.length ?? 0) < MIN_IMAGES)
+    .slice(0, LIMIT)
+
+  log(`${vehicles.length} véhicules actifs avec URL AS24`)
+  log(`${toEnrich.length} à enrichir (< ${MIN_IMAGES} images) — max ${LIMIT}`)
+  log('─────────────────────────────────────\n')
+
+  const stats = {
+    enriched: 0,
+    skipped: 0,
+    errors: 0,
+    totalNewImages: 0,
+  }
+
+  for (let i = 0; i < toEnrich.length; i++) {
+    const vehicle = toEnrich[i]
+    const prefix = `[${i + 1}/${toEnrich.length}] ${vehicle.title}`
+
+    log(`${prefix}`)
+    log(`  URL      : ${vehicle.originalListingUrl}`)
+    log(`  Images   : ${vehicle.imageUrls?.length ?? 0} actuellement`)
+
+    try {
+      const { imageUrls, extractedData } = await enrichAs24Listing(
+        vehicle.originalListingUrl as string,
+      )
+
+      log(`  Trouvées : ${imageUrls.length} images`)
+
+      if (imageUrls.length === 0) {
+        log(`  ⚠️  Aucune image trouvée — fiche peut-être bloquée ou expirée`)
+        stats.skipped++
+        if (i < toEnrich.length - 1) await sleep(DELAY_MS)
+        continue
+      }
+
+      // Construire le patch (règle : ne jamais écraser)
+      const patch: Record<string, unknown> = {}
+      const currentImageCount = vehicle.imageUrls?.length ?? 0
+
+      if (imageUrls.length > currentImageCount) {
+        patch.imageUrls = imageUrls.map((url) => ({ url }))
+      }
+
+      if (extractedData.description && !vehicle.description) {
+        patch.description = extractedData.description
+      }
+      if (extractedData.features?.length && !(vehicle.features?.length)) {
+        patch.features = extractedData.features.map((f: string) => ({ feature: f }))
+      }
+      if (extractedData.specifications?.power && !vehicle.specifications?.power) {
+        patch.specifications = { ...(vehicle.specifications ?? {}), ...extractedData.specifications }
+      }
+      if (extractedData.exteriorColor && !vehicle.exteriorColor) {
+        patch.exteriorColor = extractedData.exteriorColor
+      }
+      if (extractedData.interiorColor && !vehicle.interiorColor) {
+        patch.interiorColor = extractedData.interiorColor
+      }
+      if (extractedData.doors && !vehicle.doors) patch.doors = extractedData.doors
+      if (extractedData.seats && !vehicle.seats) patch.seats = extractedData.seats
+      if (extractedData.dealer && (!vehicle.dealer || /importemoi/i.test(vehicle.dealer as string))) {
+        patch.dealer = extractedData.dealer
+      }
+      if (extractedData.dealerCity && !vehicle.dealerCity) {
+        patch.dealerCity = extractedData.dealerCity
+      }
+
+      patch.lastScrapedAt = new Date().toISOString()
+
+      const appliedFields = Object.keys(patch).filter((k) => k !== 'lastScrapedAt')
+      const newImages = imageUrls.length - currentImageCount
+
+      if (appliedFields.length === 0) {
+        log(`  ✅ Rien à enrichir (déjà complet)`)
+        stats.skipped++
+      } else {
+        if (!DRY_RUN) {
+          await payload.update({ collection: 'vehicles', id: vehicle.id, data: patch })
+        }
+        log(`  ✅ ${DRY_RUN ? '[DRY] ' : ''}Enrichi : +${newImages} images | ${appliedFields.join(', ')}`)
+        stats.enriched++
+        stats.totalNewImages += Math.max(0, newImages)
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Erreur inconnue'
+      log(`  ❌ Erreur : ${msg}`)
+      stats.errors++
+    }
+
+    log('')
+    if (i < toEnrich.length - 1) await sleep(DELAY_MS)
+  }
+
+  log('─────────────────────────────────────')
+  log(`✅ Enrichis   : ${stats.enriched}`)
+  log(`⏭️  Ignorés    : ${stats.skipped}`)
+  log(`❌ Erreurs    : ${stats.errors}`)
+  log(`📸 Nouvelles images : ${stats.totalNewImages}`)
+  log(`Mode : ${DRY_RUN ? "DRY-RUN — rien n'a été modifié" : 'LIVE — base de données mise à jour'}`)
+
+  process.exit(0)
+}
+
+main().catch((err) => {
+  console.error('[bulk-enrich] Erreur fatale :', err)
+  process.exit(1)
+})
