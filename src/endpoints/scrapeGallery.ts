@@ -63,6 +63,13 @@ export const scrapeGalleryHandler: PayloadHandler = async (req): Promise<Respons
 
     const page = await browser.newPage()
 
+    // User-Agent réaliste pour éviter le blocage Cloudflare/AS24
+    await page.setExtraHTTPHeaders({
+      'User-Agent':
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept-Language': 'de-DE,de;q=0.9,fr;q=0.8',
+    })
+
     // Regex CDN AS24 — toutes les images listing pleine résolution
     const cdnPattern =
       /https:\/\/prod\.pictures\.autoscout24\.net\/listing-images\/[a-f0-9-]+_[a-f0-9-]+\.jpg/gi
@@ -93,10 +100,12 @@ export const scrapeGalleryHandler: PayloadHandler = async (req): Promise<Respons
       }
     })
 
-    await page.goto(listingUrl, { waitUntil: 'networkidle', timeout: 30_000 })
+    // domcontentloaded au lieu de networkidle — AS24 est une SPA qui
+    // fait des requêtes en continu, networkidle ne se déclenche jamais
+    await page.goto(listingUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
 
-    // Attendre un court instant pour que les derniers XHR se terminent
-    await new Promise((r) => setTimeout(r, 2_000))
+    // Attendre que les XHR de la fiche soient chargés (images incluses)
+    await new Promise((r) => setTimeout(r, 6_000))
 
     // Si l'interception réseau a trouvé des images → on les utilise directement
     let imageUrls: string[] = [...intercepted]
