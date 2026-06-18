@@ -70,11 +70,13 @@ export const scrapeGalleryHandler: PayloadHandler = async (req): Promise<Respons
       'Accept-Language': 'de-DE,de;q=0.9,fr;q=0.8',
     })
 
-    // Regex CDN AS24 — capture uniquement les URLs de base (sans suffixe de taille)
-    // Format AS24 : /listing-images/{listing-uuid}_{image-uuid}.jpg
-    // On ignore les variantes avec suffixe (/120x90.jpg, /1920x1080.webp, etc.)
+    // Regex CDN AS24 — capture toutes les URLs listing-images (avec ou sans suffixe de taille)
     const cdnPattern =
-      /https:\/\/prod\.pictures\.autoscout24\.net\/listing-images\/[a-f0-9-]+_[a-f0-9-]+\.jpg(?!\/)/gi
+      /https:\/\/prod\.pictures\.autoscout24\.net\/listing-images\/[a-f0-9-]+_[a-f0-9-]+\.jpg[^\s"']*/gi
+
+    // Normalise une URL AS24 vers sa forme de base (sans suffixe /NxN.ext)
+    const normalizeAs24Url = (url: string) =>
+      url.replace(/\/\d+x\d+\.(jpg|jpeg|webp|png)$/i, '')
 
     // Passe 0 : intercepter les réponses réseau JSON avant navigation
     // AS24 appelle son API interne pour charger la fiche (toutes les photos incluses)
@@ -86,7 +88,7 @@ export const scrapeGalleryHandler: PayloadHandler = async (req): Promise<Respons
         if (!ct.includes('application/json') && !ct.includes('text/javascript')) return
         const text = await response.text()
         for (const match of text.matchAll(cdnPattern)) {
-          intercepted.add(match[0])
+          intercepted.add(normalizeAs24Url(match[0]))
         }
       } catch {
         /* ignore — response déjà consommée ou binaire */
@@ -153,10 +155,14 @@ export const scrapeGalleryHandler: PayloadHandler = async (req): Promise<Respons
       )
     }
 
-    // Garder uniquement les URLs CDN listing-images (exclure assets, logos, icônes)
-    const finalUrls = imageUrls.filter((u) =>
-      u.includes('prod.pictures.autoscout24.net/listing-images/'),
-    )
+    // Normaliser + garder uniquement les URLs CDN listing-images
+    const finalUrls = [
+      ...new Set(
+        imageUrls
+          .map(normalizeAs24Url)
+          .filter((u) => u.includes('prod.pictures.autoscout24.net/listing-images/')),
+      ),
+    ]
 
     if (!finalUrls.length) {
       return Response.json({ error: 'No images found at listing URL' }, { status: 502 })
