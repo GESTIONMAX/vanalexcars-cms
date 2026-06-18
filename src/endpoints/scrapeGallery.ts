@@ -3,25 +3,29 @@ import { chromium } from 'playwright-core'
 import type { Vehicle } from '@/payload-types'
 
 const ALLOWED_HOST = /^https?:\/\/(www\.)?autoscout24\.(de|com|fr|it|es|nl|be|at|ch|lu|pl)/
-const SCRAPE_SECRET = process.env.SCRAPE_SECRET
-
-function authorized(req: Parameters<PayloadHandler>[0]): boolean {
-  if (!SCRAPE_SECRET) return false
-  return req.headers.get('x-scrape-secret') === SCRAPE_SECRET
-}
 
 export const scrapeGalleryHandler: PayloadHandler = async (req): Promise<Response> => {
   const { payload } = req
 
-  if (!authorized(req)) {
-    return Response.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  let body: { vehicleId?: string; dryRun?: boolean }
+  // Parser le body en premier pour pouvoir lire le secret dedans
+  let body: { vehicleId?: string; dryRun?: boolean; secret?: string }
   try {
     body = await (req as unknown as Request).json()
   } catch {
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+
+  // Auth : si SCRAPER_SECRET est défini, vérifier header ou body
+  const scraperSecret = process.env.SCRAPER_SECRET
+  if (scraperSecret) {
+    const provided =
+      req.headers.get('x-secret') ??
+      req.headers.get('x-scrape-secret') ??
+      body.secret ??
+      null
+    if (provided !== scraperSecret) {
+      return Response.json({ error: 'Unauthorized' }, { status: 401 })
+    }
   }
 
   const { vehicleId, dryRun = false } = body
