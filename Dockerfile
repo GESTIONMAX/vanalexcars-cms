@@ -57,6 +57,8 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 # Scripts standalone (sync AS24, etc.) — node_modules complets + sources
 COPY --from=deps --chown=nextjs:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=nextjs:nodejs /app/src ./src
+COPY --from=builder /app/tsconfig.json ./tsconfig.json
+COPY --from=builder /app/package.json ./package.json
 
 USER nextjs
 
