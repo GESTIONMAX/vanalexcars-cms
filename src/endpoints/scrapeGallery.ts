@@ -19,7 +19,7 @@ export const scrapeGalleryHandler: PayloadHandler = async (req): Promise<Respons
 
   let body: { vehicleId?: string; dryRun?: boolean }
   try {
-    body = await req.json()
+    body = await (req as unknown as Request).json()
   } catch {
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
