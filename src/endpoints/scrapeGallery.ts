@@ -63,6 +63,27 @@ export const scrapeGalleryHandler: PayloadHandler = async (req): Promise<Respons
 
     const page = await browser.newPage()
 
+    // Regex CDN AS24 — toutes les images listing pleine résolution
+    const cdnPattern =
+      /https:\/\/prod\.pictures\.autoscout24\.net\/listing-images\/[a-f0-9-]+_[a-f0-9-]+\.jpg/gi
+
+    // Passe 0 : intercepter les réponses réseau JSON avant navigation
+    // AS24 appelle son API interne pour charger la fiche (toutes les photos incluses)
+    const intercepted = new Set<string>()
+
+    page.on('response', async (response) => {
+      try {
+        const ct = response.headers()['content-type'] ?? ''
+        if (!ct.includes('application/json') && !ct.includes('text/javascript')) return
+        const text = await response.text()
+        for (const match of text.matchAll(cdnPattern)) {
+          intercepted.add(match[0])
+        }
+      } catch {
+        /* ignore — response déjà consommée ou binaire */
+      }
+    })
+
     // Bloquer fonts/styles pour accélérer le chargement
     await page.route('**/*', (route) => {
       if (['font', 'stylesheet', 'media'].includes(route.request().resourceType())) {
@@ -74,59 +95,56 @@ export const scrapeGalleryHandler: PayloadHandler = async (req): Promise<Respons
 
     await page.goto(listingUrl, { waitUntil: 'networkidle', timeout: 30_000 })
 
-    // Passe 1 : JSON-LD (robuste, indépendant des class CSS)
-    let imageUrls: string[] | null = await page.evaluate(() => {
-      for (const script of Array.from(
-        document.querySelectorAll('script[type="application/ld+json"]'),
-      )) {
-        try {
-          const data = JSON.parse(script.textContent ?? '')
-          const nodes = data['@graph'] ? data['@graph'] : [data]
-          for (const node of nodes) {
-            if (['Vehicle', 'Car'].includes(node['@type'])) {
-              const imgs = node.image
-              if (Array.isArray(imgs) && imgs.length) return imgs as string[]
-              if (typeof imgs === 'string') return [imgs]
-            }
-          }
-        } catch {
-          /* skip parse errors */
-        }
-      }
-      return null
-    })
+    // Attendre un court instant pour que les derniers XHR se terminent
+    await new Promise((r) => setTimeout(r, 2_000))
 
-    // Passe 2 : DOM fallback sur les <img> avec domaine autoscout24
-    if (!imageUrls?.length) {
+    // Si l'interception réseau a trouvé des images → on les utilise directement
+    let imageUrls: string[] = [...intercepted]
+
+    // Passe 1 : JSON-LD (si interception vide)
+    if (!imageUrls.length) {
+      const jsonLd: string[] | null = await page.evaluate(() => {
+        for (const script of Array.from(
+          document.querySelectorAll('script[type="application/ld+json"]'),
+        )) {
+          try {
+            const data = JSON.parse(script.textContent ?? '')
+            const nodes = data['@graph'] ? data['@graph'] : [data]
+            for (const node of nodes) {
+              if (['Vehicle', 'Car'].includes(node['@type'])) {
+                const imgs = node.image
+                if (Array.isArray(imgs) && imgs.length) return imgs as string[]
+                if (typeof imgs === 'string') return [imgs]
+              }
+            }
+          } catch { /* skip */ }
+        }
+        return null
+      })
+      if (jsonLd?.length) imageUrls = jsonLd
+    }
+
+    // Passe 2 : DOM fallback (dernier recours)
+    if (!imageUrls.length) {
       try {
         await page.waitForSelector('img[src*="autoscout24"]', { timeout: 8_000 })
-      } catch {
-        /* ignore si le sélecteur n'est pas trouvé */
-      }
+      } catch { /* ignore */ }
       imageUrls = await page.evaluate(() =>
-        [
-          ...new Set(
-            Array.from(document.querySelectorAll('img'))
-              .map(
-                (img) =>
-                  (img as HTMLImageElement).src || img.getAttribute('data-src') || '',
-              )
-              .filter(
-                (src) =>
-                  src.includes('autoscout24') &&
-                  src.match(/\.(jpg|jpeg|webp|png)/i) &&
-                  !src.includes('logo'),
-              ),
-          ),
-        ],
+        [...new Set(
+          Array.from(document.querySelectorAll('img'))
+            .map((img) => (img as HTMLImageElement).src || img.getAttribute('data-src') || '')
+            .filter((src) =>
+              src.includes('autoscout24') &&
+              src.match(/\.(jpg|jpeg|webp|png)/i) &&
+              !src.includes('logo'),
+            ),
+        )],
       )
     }
 
     // Filtrer les thumbnails (URLs terminant par _100.jpg, _200.jpg, etc.)
-    const fullSize = (imageUrls ?? []).filter(
-      (u) => !u.match(/_\d{1,3}\.(jpg|jpeg|webp)$/i),
-    )
-    const finalUrls = fullSize.length ? fullSize : (imageUrls ?? [])
+    const fullSize = imageUrls.filter((u) => !u.match(/_\d{1,3}\.(jpg|jpeg|webp)$/i))
+    const finalUrls = fullSize.length ? fullSize : imageUrls
 
     if (!finalUrls.length) {
       return Response.json({ error: 'No images found at listing URL' }, { status: 502 })
