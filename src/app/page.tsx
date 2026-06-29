@@ -26,7 +26,7 @@ const externalLinks = [
   { name: 'Stripe', url: 'https://dashboard.stripe.com', description: 'Paiements' },
   { name: 'Brevo', url: 'https://app.brevo.com', description: 'Emails transactionnels' },
   { name: 'Netlify', url: 'https://app.netlify.com', description: 'Frontend deployment' },
-  { name: 'MongoDB Atlas', url: 'https://cloud.mongodb.com', description: 'Base de donnees' },
+  { name: 'MongoDB Coolify', url: 'https://coolify.import-voiture-allemagne.fr', description: 'Base de donnees' },
   { name: 'GitHub', url: 'https://github.com/Aurelmax/vanalexcars-cms', description: 'Repository backend' },
 ]
 
