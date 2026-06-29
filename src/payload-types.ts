@@ -74,6 +74,8 @@ export interface Config {
     users: User;
     comments: Comment;
     vehicles: Vehicle;
+    'import-mandates': ImportMandate;
+    leads: Lead;
     forms: Form;
     'form-submissions': FormSubmission;
     'payload-kv': PayloadKv;
@@ -90,6 +92,8 @@ export interface Config {
     users: UsersSelect<false> | UsersSelect<true>;
     comments: CommentsSelect<false> | CommentsSelect<true>;
     vehicles: VehiclesSelect<false> | VehiclesSelect<true>;
+    'import-mandates': ImportMandatesSelect<false> | ImportMandatesSelect<true>;
+    leads: LeadsSelect<false> | LeadsSelect<true>;
     forms: FormsSelect<false> | FormsSelect<true>;
     'form-submissions': FormSubmissionsSelect<false> | FormSubmissionsSelect<true>;
     'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
@@ -995,6 +999,156 @@ export interface Vehicle {
   createdAt: string;
 }
 /**
+ * Mandats de recherche, sélection et accompagnement à l'importation
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "import-mandates".
+ */
+export interface ImportMandate {
+  id: string;
+  /**
+   * Ex: VX-2025-001
+   */
+  reference: string;
+  status: 'draft' | 'sent_to_client' | 'signed' | 'deposit_paid' | 'active' | 'completed' | 'cancelled';
+  clientInfo: {
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone?: string | null;
+    address?: string | null;
+    postalCode?: string | null;
+    city?: string | null;
+    country?: string | null;
+    identityDocumentType?: ('cni' | 'passport' | 'residence_permit') | null;
+    identityDocumentNumber?: string | null;
+    identityDocumentFileUrl?: string | null;
+  };
+  vehicleInfo: {
+    brand: string;
+    model: string;
+    version?: string | null;
+    vin?: string | null;
+    firstRegistrationDate?: string | null;
+    mileage?: number | null;
+    fuelType?: ('petrol' | 'diesel' | 'hybrid' | 'electric' | 'phev') | null;
+    transmission?: ('automatic' | 'manual') | null;
+    color?: string | null;
+    power?: string | null;
+    co2?: number | null;
+    vehiclePrice: number;
+    vehicleCurrency?: string | null;
+    vehicleVatIncluded?: boolean | null;
+    warrantyInfo?: string | null;
+  };
+  dealerInfo: {
+    dealerName: string;
+    dealerAddress?: string | null;
+    dealerCountry?: string | null;
+    dealerContactName?: string | null;
+    dealerEmail?: string | null;
+    dealerPhone?: string | null;
+    dealerOrderNumber: string;
+    dealerOfferDate?: string | null;
+    dealerOfferFileUrl?: string | null;
+  };
+  serviceInfo: {
+    serviceName?: string | null;
+    serviceDescription?: string | null;
+    servicePrice: number;
+    depositAmount: number;
+    remainingBalance?: number | null;
+    transportIncluded?: boolean | null;
+    transportProvider?: string | null;
+    transportEstimatedCost?: number | null;
+    adminSupportIncluded?: boolean | null;
+    cpiIncluded?: boolean | null;
+    finalRegistrationSupportIncluded?: boolean | null;
+    homeDeliveryIncluded?: boolean | null;
+  };
+  taxesInfo?: {
+    registrationTaxEstimated?: number | null;
+    ecologicalMalusEstimated?: number | null;
+    registrationTaxIncluded?: boolean | null;
+    ecologicalMalusIncluded?: boolean | null;
+    notesAboutTaxes?: string | null;
+  };
+  signatureInfo?: {
+    signatureProvider?: string | null;
+    signatureRequestId?: string | null;
+    signedAt?: string | null;
+    signedDocumentUrl?: string | null;
+    stripePaymentLink?: string | null;
+    stripePaymentIntentId?: string | null;
+    depositPaidAt?: string | null;
+  };
+  internalNotes?: string | null;
+  /**
+   * Demande d'origine ayant généré ce mandat
+   */
+  sourceLead?: (string | null) | Lead;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Demandes entrantes — à qualifier, enrichir avec les infos concessionnaire, puis convertir en mandat
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "leads".
+ */
+export interface Lead {
+  id: string;
+  fullName: string;
+  email: string;
+  phone?: string | null;
+  vehicleSearched: string;
+  budget?: ('<30k' | '30-50k' | '50-80k' | '80-120k' | '120-150k') | null;
+  timeline?: ('immediate' | 'normale' | 'flexible') | null;
+  message?: string | null;
+  status:
+    | 'new'
+    | 'qualifying'
+    | 'contacted'
+    | 'dealer_request_sent'
+    | 'dealer_offer_received'
+    | 'mandate_pending'
+    | 'mandate_created'
+    | 'abandoned'
+    | 'refused';
+  /**
+   * À remplir après identification du véhicule et contact avec le concessionnaire
+   */
+  dealerInfo?: {
+    dealerName?: string | null;
+    dealerContact?: string | null;
+    dealerCity?: string | null;
+    dealerCountry?: string | null;
+  };
+  /**
+   * À remplir à réception du bon de commande — débloque la conversion en mandat
+   */
+  dealerOffer?: {
+    dealerOfferReference?: string | null;
+    dealerOfferDate?: string | null;
+    vehicleAvailabilityConfirmed?: boolean | null;
+    /**
+     * Prix réel négocié avec le concessionnaire
+     */
+    confirmedVehiclePrice?: number | null;
+    dealerNotes?: string | null;
+  };
+  /**
+   * Visibles uniquement dans le dashboard — non transmises au client
+   */
+  internalNotes?: string | null;
+  /**
+   * Rempli lors de la conversion en mandat (après réception bon de commande)
+   */
+  convertedMandate?: (string | null) | ImportMandate;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "form-submissions".
  */
@@ -1062,6 +1216,14 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'vehicles';
         value: string | Vehicle;
+      } | null)
+    | ({
+        relationTo: 'import-mandates';
+        value: string | ImportMandate;
+      } | null)
+    | ({
+        relationTo: 'leads';
+        value: string | Lead;
       } | null)
     | ({
         relationTo: 'forms';
@@ -1490,6 +1652,136 @@ export interface VehiclesSelect<T extends boolean = true> {
         thumbnail?: T;
         social?: T;
       };
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "import-mandates_select".
+ */
+export interface ImportMandatesSelect<T extends boolean = true> {
+  reference?: T;
+  status?: T;
+  clientInfo?:
+    | T
+    | {
+        firstName?: T;
+        lastName?: T;
+        email?: T;
+        phone?: T;
+        address?: T;
+        postalCode?: T;
+        city?: T;
+        country?: T;
+        identityDocumentType?: T;
+        identityDocumentNumber?: T;
+        identityDocumentFileUrl?: T;
+      };
+  vehicleInfo?:
+    | T
+    | {
+        brand?: T;
+        model?: T;
+        version?: T;
+        vin?: T;
+        firstRegistrationDate?: T;
+        mileage?: T;
+        fuelType?: T;
+        transmission?: T;
+        color?: T;
+        power?: T;
+        co2?: T;
+        vehiclePrice?: T;
+        vehicleCurrency?: T;
+        vehicleVatIncluded?: T;
+        warrantyInfo?: T;
+      };
+  dealerInfo?:
+    | T
+    | {
+        dealerName?: T;
+        dealerAddress?: T;
+        dealerCountry?: T;
+        dealerContactName?: T;
+        dealerEmail?: T;
+        dealerPhone?: T;
+        dealerOrderNumber?: T;
+        dealerOfferDate?: T;
+        dealerOfferFileUrl?: T;
+      };
+  serviceInfo?:
+    | T
+    | {
+        serviceName?: T;
+        serviceDescription?: T;
+        servicePrice?: T;
+        depositAmount?: T;
+        remainingBalance?: T;
+        transportIncluded?: T;
+        transportProvider?: T;
+        transportEstimatedCost?: T;
+        adminSupportIncluded?: T;
+        cpiIncluded?: T;
+        finalRegistrationSupportIncluded?: T;
+        homeDeliveryIncluded?: T;
+      };
+  taxesInfo?:
+    | T
+    | {
+        registrationTaxEstimated?: T;
+        ecologicalMalusEstimated?: T;
+        registrationTaxIncluded?: T;
+        ecologicalMalusIncluded?: T;
+        notesAboutTaxes?: T;
+      };
+  signatureInfo?:
+    | T
+    | {
+        signatureProvider?: T;
+        signatureRequestId?: T;
+        signedAt?: T;
+        signedDocumentUrl?: T;
+        stripePaymentLink?: T;
+        stripePaymentIntentId?: T;
+        depositPaidAt?: T;
+      };
+  internalNotes?: T;
+  sourceLead?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "leads_select".
+ */
+export interface LeadsSelect<T extends boolean = true> {
+  fullName?: T;
+  email?: T;
+  phone?: T;
+  vehicleSearched?: T;
+  budget?: T;
+  timeline?: T;
+  message?: T;
+  status?: T;
+  dealerInfo?:
+    | T
+    | {
+        dealerName?: T;
+        dealerContact?: T;
+        dealerCity?: T;
+        dealerCountry?: T;
+      };
+  dealerOffer?:
+    | T
+    | {
+        dealerOfferReference?: T;
+        dealerOfferDate?: T;
+        vehicleAvailabilityConfirmed?: T;
+        confirmedVehiclePrice?: T;
+        dealerNotes?: T;
+      };
+  internalNotes?: T;
+  convertedMandate?: T;
   updatedAt?: T;
   createdAt?: T;
 }
