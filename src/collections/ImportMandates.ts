@@ -180,6 +180,19 @@ export const ImportMandates: CollectionConfig = {
 
     // ── Notes internes ────────────────────────────────────────────────────────
     { name: 'internalNotes', type: 'textarea', label: 'Notes internes (non transmises au client)' },
+
+    // ── Origine (lead source) ─────────────────────────────────────────────────
+    {
+      name: 'sourceLead',
+      type: 'relationship',
+      relationTo: 'leads',
+      label: 'Lead source',
+      hasMany: false,
+      admin: {
+        description: 'Demande d\'origine ayant généré ce mandat',
+        readOnly: true,
+      },
+    },
   ],
   timestamps: true,
 }

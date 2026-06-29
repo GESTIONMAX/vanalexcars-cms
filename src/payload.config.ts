@@ -19,6 +19,7 @@ import { getServerSideURL } from './utilities/getURL'
 import { scrapeGalleryHandler } from './endpoints/scrapeGallery'
 import { enrichVehicleHandler } from './endpoints/enrichVehicle'
 import { ImportMandates } from './collections/ImportMandates'
+import { Leads } from './collections/Leads'
 import { generateMandatePdfHandler } from './endpoints/generateMandatePdf'
 
 const filename = fileURLToPath(import.meta.url)
@@ -36,7 +37,7 @@ export default buildConfig({
   db: mongooseAdapter({
     url: process.env.MONGODB_URI || process.env.DATABASE_URI || '',
   }),
-  collections: [Pages, Posts, Media, Categories, Users, Comments, Vehicles, ImportMandates],
+  collections: [Pages, Posts, Media, Categories, Users, Comments, Vehicles, ImportMandates, Leads],
   cors: [
     getServerSideURL(),
     'http://localhost:3000',
