@@ -49,7 +49,7 @@ export const Leads: CollectionConfig = {
         { label: '30 000 – 50 000 €', value: '30-50k' },
         { label: '50 000 – 80 000 €', value: '50-80k' },
         { label: '80 000 – 120 000 €', value: '80-120k' },
-        { label: 'Plus de 120 000 €', value: '120k+' },
+        { label: '120 000 – 150 000 €', value: '120-150k' },
       ],
     },
     {
