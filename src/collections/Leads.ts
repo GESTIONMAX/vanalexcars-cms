@@ -4,7 +4,7 @@ export const Leads: CollectionConfig = {
   slug: 'leads',
   admin: {
     useAsTitle: 'fullName',
-    description: 'Demandes entrantes depuis le formulaire /demande — à qualifier avant conversion en mandat',
+    description: 'Demandes entrantes — à qualifier, enrichir avec les infos concessionnaire, puis convertir en mandat',
     defaultColumns: ['fullName', 'email', 'vehicleSearched', 'budget', 'status', 'createdAt'],
   },
   access: {
@@ -14,7 +14,7 @@ export const Leads: CollectionConfig = {
     delete: () => true,
   },
   fields: [
-    // Coordonnées client
+    // ── Coordonnées client ────────────────────────────────────────────────────
     {
       name: 'fullName',
       type: 'text',
@@ -32,7 +32,8 @@ export const Leads: CollectionConfig = {
       type: 'text',
       label: 'Téléphone',
     },
-    // Véhicule recherché
+
+    // ── Véhicule recherché (formulaire initial) ───────────────────────────────
     {
       name: 'vehicleSearched',
       type: 'text',
@@ -42,12 +43,12 @@ export const Leads: CollectionConfig = {
     {
       name: 'budget',
       type: 'select',
-      label: 'Budget',
+      label: 'Budget déclaré',
       options: [
         { label: 'Moins de 30 000 €', value: '<30k' },
-        { label: '30 000 € – 50 000 €', value: '30-50k' },
-        { label: '50 000 € – 80 000 €', value: '50-80k' },
-        { label: '80 000 € – 120 000 €', value: '80-120k' },
+        { label: '30 000 – 50 000 €', value: '30-50k' },
+        { label: '50 000 – 80 000 €', value: '50-80k' },
+        { label: '80 000 – 120 000 €', value: '80-120k' },
         { label: 'Plus de 120 000 €', value: '120k+' },
       ],
     },
@@ -64,9 +65,10 @@ export const Leads: CollectionConfig = {
     {
       name: 'message',
       type: 'textarea',
-      label: 'Critères et précisions',
+      label: 'Critères et précisions (client)',
     },
-    // Qualification
+
+    // ── Statut du lead ────────────────────────────────────────────────────────
     {
       name: 'status',
       type: 'select',
@@ -74,16 +76,92 @@ export const Leads: CollectionConfig = {
       required: true,
       defaultValue: 'new',
       options: [
-        { label: 'Nouvelle demande', value: 'new' },
-        { label: 'En qualification', value: 'qualifying' },
-        { label: 'Client contacté', value: 'contacted' },
-        { label: 'Proposition envoyée', value: 'proposal_sent' },
-        { label: 'Mandat à créer', value: 'mandate_pending' },
-        { label: 'Mandat créé', value: 'mandate_created' },
-        { label: 'Abandonné', value: 'abandoned' },
-        { label: 'Refusé', value: 'refused' },
+        { label: 'Nouvelle demande',              value: 'new' },
+        { label: 'En qualification',              value: 'qualifying' },
+        { label: 'Client contacté',               value: 'contacted' },
+        { label: 'Demande envoyée au concess.',   value: 'dealer_request_sent' },
+        { label: 'Offre concess. reçue',          value: 'dealer_offer_received' },
+        { label: 'Mandat à créer',                value: 'mandate_pending' },
+        { label: 'Mandat créé',                   value: 'mandate_created' },
+        { label: 'Abandonné',                     value: 'abandoned' },
+        { label: 'Refusé',                        value: 'refused' },
       ],
     },
+
+    // ── Informations concessionnaire ──────────────────────────────────────────
+    {
+      name: 'dealerInfo',
+      type: 'group',
+      label: 'Concessionnaire',
+      admin: {
+        description: 'À remplir après identification du véhicule et contact avec le concessionnaire',
+      },
+      fields: [
+        {
+          name: 'dealerName',
+          type: 'text',
+          label: 'Nom du concessionnaire',
+        },
+        {
+          name: 'dealerContact',
+          type: 'text',
+          label: 'Contact (nom)',
+        },
+        {
+          name: 'dealerCity',
+          type: 'text',
+          label: 'Ville',
+        },
+        {
+          name: 'dealerCountry',
+          type: 'text',
+          label: 'Pays',
+          defaultValue: 'Allemagne',
+        },
+      ],
+    },
+
+    // ── Offre / Bon de commande concessionnaire ───────────────────────────────
+    {
+      name: 'dealerOffer',
+      type: 'group',
+      label: 'Offre concessionnaire',
+      admin: {
+        description: 'À remplir à réception du bon de commande — débloque la conversion en mandat',
+      },
+      fields: [
+        {
+          name: 'dealerOfferReference',
+          type: 'text',
+          label: 'Référence bon de commande',
+        },
+        {
+          name: 'dealerOfferDate',
+          type: 'date',
+          label: 'Date de l\'offre',
+          admin: { date: { pickerAppearance: 'dayOnly' } },
+        },
+        {
+          name: 'vehicleAvailabilityConfirmed',
+          type: 'checkbox',
+          label: 'Disponibilité confirmée par le concessionnaire',
+          defaultValue: false,
+        },
+        {
+          name: 'confirmedVehiclePrice',
+          type: 'number',
+          label: 'Prix véhicule confirmé (€ TTC)',
+          admin: { description: 'Prix réel négocié avec le concessionnaire' },
+        },
+        {
+          name: 'dealerNotes',
+          type: 'textarea',
+          label: 'Notes sur l\'offre concessionnaire',
+        },
+      ],
+    },
+
+    // ── Notes internes ────────────────────────────────────────────────────────
     {
       name: 'internalNotes',
       type: 'textarea',
@@ -92,7 +170,8 @@ export const Leads: CollectionConfig = {
         description: 'Visibles uniquement dans le dashboard — non transmises au client',
       },
     },
-    // Relation vers le mandat créé (remplie lors de la conversion)
+
+    // ── Mandat associé ────────────────────────────────────────────────────────
     {
       name: 'convertedMandate',
       type: 'relationship',
@@ -100,7 +179,7 @@ export const Leads: CollectionConfig = {
       label: 'Mandat associé',
       hasMany: false,
       admin: {
-        description: 'Rempli automatiquement lors de la conversion en mandat',
+        description: 'Rempli lors de la conversion en mandat (après réception bon de commande)',
         readOnly: true,
       },
     },
