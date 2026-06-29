@@ -18,6 +18,8 @@ import { defaultLexical } from '@/fields/defaultLexical'
 import { getServerSideURL } from './utilities/getURL'
 import { scrapeGalleryHandler } from './endpoints/scrapeGallery'
 import { enrichVehicleHandler } from './endpoints/enrichVehicle'
+import { ImportMandates } from './collections/ImportMandates'
+import { generateMandatePdfHandler } from './endpoints/generateMandatePdf'
 
 const filename = fileURLToPath(import.meta.url)
 const dirname = path.dirname(filename)
@@ -34,7 +36,7 @@ export default buildConfig({
   db: mongooseAdapter({
     url: process.env.MONGODB_URI || process.env.DATABASE_URI || '',
   }),
-  collections: [Pages, Posts, Media, Categories, Users, Comments, Vehicles],
+  collections: [Pages, Posts, Media, Categories, Users, Comments, Vehicles, ImportMandates],
   cors: [
     getServerSideURL(),
     'http://localhost:3000',
@@ -75,6 +77,11 @@ export default buildConfig({
       path: '/enrich-vehicle',
       method: 'post',
       handler: enrichVehicleHandler,
+    },
+    {
+      path: '/generate-mandate-pdf',
+      method: 'post',
+      handler: generateMandatePdfHandler,
     },
   ],
   secret: process.env.PAYLOAD_SECRET,
