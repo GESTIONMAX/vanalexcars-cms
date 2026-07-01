@@ -53,7 +53,7 @@ export const enrichVehicleHandler: PayloadHandler = async (req): Promise<Respons
     return Response.json({ error: 'Vehicle not found' }, { status: 404 })
   }
 
-  const listingUrl =
+  let listingUrl =
     vehicle.originalListingUrl ||
     (vehicle.sourceUrl?.includes('/angebote/') ? vehicle.sourceUrl : null)
   if (!listingUrl)
@@ -61,6 +61,10 @@ export const enrichVehicleHandler: PayloadHandler = async (req): Promise<Respons
       { error: 'Vehicle has no `originalListingUrl` or valid `sourceUrl`' },
       { status: 400 },
     )
+  // Normaliser les URLs relatives → absolues
+  if (listingUrl.startsWith('/')) {
+    listingUrl = `https://www.autoscout24.de${listingUrl}`
+  }
   if (!ALLOWED_HOST.test(listingUrl))
     return Response.json(
       { error: 'URL not allowed (must be an AutoScout24 domain)' },
