@@ -132,6 +132,14 @@ export const enrichVehicleHandler: PayloadHandler = async (req): Promise<Respons
       patch.dealerCity = extractedData.dealerCity
     }
 
+    // Prix et kilométrage (depuis __NEXT_DATA__ de la fiche individuelle)
+    if (extractedData.price && extractedData.price > 0 && !(vehicle.price && vehicle.price > 0)) {
+      patch.price = extractedData.price
+    }
+    if (extractedData.mileage != null && !(vehicle.mileage != null && vehicle.mileage > 0)) {
+      patch.mileage = extractedData.mileage
+    }
+
     // Horodatage de passage
     patch.lastScrapedAt = new Date().toISOString()
 

@@ -34,6 +34,8 @@ export interface As24EnrichedData {
     seats?: number
     dealer?: string
     dealerCity?: string
+    price?: number
+    mileage?: number
   }
 }
 
@@ -125,6 +127,95 @@ export async function enrichAs24Listing(listingUrl: string): Promise<As24Enriche
 
     // Attendre que les XHR de la fiche soient chargés (~6 s en prod)
     await new Promise((r) => setTimeout(r, 6_000))
+
+    // ── PASSE 0b : __NEXT_DATA__ — données SSR structurées ────────────────
+    // Contient souvent price, power, dealer, km directement dans le JSON
+    interface NextDataExtracted {
+      price?: number
+      mileage?: number
+      power?: string
+      dealerName?: string
+      dealerCity?: string
+      exteriorColor?: string
+      interiorColor?: string
+      doors?: number
+      seats?: number
+      description?: string
+    }
+
+    const nextDataExtracted: NextDataExtracted = await page.evaluate((): NextDataExtracted => {
+      const el = document.querySelector('#__NEXT_DATA__')
+      if (!el?.textContent) return {}
+      try {
+        const json = JSON.parse(el.textContent)
+        // Traverser récursivement pour trouver les données véhicule
+        function findVehicleData(obj: unknown, depth = 0): NextDataExtracted {
+          if (!obj || typeof obj !== 'object' || depth > 8) return {}
+          const rec = obj as Record<string, unknown>
+
+          // Détection : objet contenant des champs véhicule AS24
+          const hasMake = 'make' in rec || 'brand' in rec
+          const hasPrice = 'price' in rec || ('pricing' in rec)
+          if (hasMake || hasPrice) {
+            const pricing = (rec.pricing ?? rec.price) as Record<string,unknown> | number | undefined
+            const price = typeof pricing === 'number' ? pricing
+              : typeof (pricing as Record<string,unknown>)?.gross === 'number' ? (pricing as Record<string,unknown>).gross as number
+              : undefined
+            const mileage = (rec.mileage as Record<string,unknown>)?.value as number ?? rec.mileage as number ?? undefined
+            const seller = (rec.seller ?? rec.dealer ?? rec.contact ?? {}) as Record<string,unknown>
+            const loc = (seller.location ?? seller) as Record<string,unknown>
+            const attr = (rec.attributes ?? rec.vehicle ?? {}) as Record<string,unknown>
+
+            // Puissance : chercher dans typedAttributes ou attributes
+            const typedAttrs = (rec.typedAttributes ?? rec.vehicleAttributes ?? []) as Array<Record<string,unknown>>
+            let power: string | undefined
+            for (const a of typedAttrs) {
+              const key = String(a.key ?? a.id ?? '').toLowerCase()
+              if (key.includes('power') || key.includes('leistung') || key === 'ps' || key === 'kw') {
+                power = String(a.value ?? a.formattedValue ?? '')
+                break
+              }
+            }
+            if (!power) {
+              const rawPower = attr.power ?? attr.leistung ?? rec.power
+              if (rawPower) power = String(rawPower)
+            }
+
+            const exteriorColor = String(
+              attr.color ?? attr.exteriorColor ?? rec.color ?? rec.exteriorColor ?? ''
+            ) || undefined
+            const interiorColor = String(
+              attr.interiorColor ?? rec.interiorColor ?? ''
+            ) || undefined
+            const doors = Number(attr.doors ?? rec.doors) || undefined
+            const seats = Number(attr.seats ?? rec.seats) || undefined
+
+            return {
+              price: price as number | undefined,
+              mileage: mileage as number | undefined,
+              power: power || undefined,
+              dealerName: String(seller.name ?? seller.companyName ?? '').trim() || undefined,
+              dealerCity: String(loc.city ?? loc.locality ?? '').trim() || undefined,
+              exteriorColor: exteriorColor || undefined,
+              interiorColor: interiorColor || undefined,
+              doors,
+              seats,
+            }
+          }
+
+          // Chercher dans les sous-objets connus
+          for (const key of ['pageProps', 'props', 'data', 'listing', 'vehicle', 'classified', 'ad']) {
+            if (rec[key] && typeof rec[key] === 'object') {
+              const found = findVehicleData(rec[key], depth + 1)
+              if (found.price || found.power || found.dealerName) return found
+            }
+          }
+
+          return {}
+        }
+        return findVehicleData(json)
+      } catch { return {} }
+    })
 
     // ── PASSE 1 : JSON-LD ─────────────────────────────────────────────────
     // Fallback images + extraction de la description (champ stable dans le JSON-LD AS24)
@@ -291,8 +382,6 @@ export async function enrichAs24Listing(listingUrl: string): Promise<As24Enriche
       specMap['ps'] ??
       undefined
 
-    const specifications = rawPower ? parsePower(rawPower) : undefined
-
     // Couleurs
     const exteriorColor =
       specMap['außenfarbe'] ??
@@ -316,13 +405,33 @@ export async function enrichAs24Listing(listingUrl: string): Promise<As24Enriche
     const extractedData: As24EnrichedData['extractedData'] = {}
     if (jsonLdData?.description) extractedData.description = jsonLdData.description
     if (domData.features.length > 0) extractedData.features = domData.features
+
+    // Puissance : DOM prioritaire, fallback __NEXT_DATA__
+    const finalPower = rawPower ?? nextDataExtracted.power
+    const specifications = finalPower ? parsePower(finalPower) : undefined
     if (specifications) extractedData.specifications = specifications
-    if (exteriorColor) extractedData.exteriorColor = exteriorColor
-    if (interiorColor) extractedData.interiorColor = interiorColor
-    if (doors) extractedData.doors = doors
-    if (seats) extractedData.seats = seats
-    if (domData.dealerName) extractedData.dealer = domData.dealerName
-    if (domData.dealerCity) extractedData.dealerCity = domData.dealerCity
+
+    // Couleurs : DOM prioritaire, fallback __NEXT_DATA__
+    if (exteriorColor ?? nextDataExtracted.exteriorColor)
+      extractedData.exteriorColor = (exteriorColor ?? nextDataExtracted.exteriorColor)!
+    if (interiorColor ?? nextDataExtracted.interiorColor)
+      extractedData.interiorColor = (interiorColor ?? nextDataExtracted.interiorColor)!
+
+    // Portes / places
+    if (doors ?? nextDataExtracted.doors) extractedData.doors = (doors ?? nextDataExtracted.doors)!
+    if (seats ?? nextDataExtracted.seats) extractedData.seats = (seats ?? nextDataExtracted.seats)!
+
+    // Dealer : DOM prioritaire, fallback __NEXT_DATA__
+    if (domData.dealerName ?? nextDataExtracted.dealerName)
+      extractedData.dealer = (domData.dealerName ?? nextDataExtracted.dealerName)!
+    if (domData.dealerCity ?? nextDataExtracted.dealerCity)
+      extractedData.dealerCity = (domData.dealerCity ?? nextDataExtracted.dealerCity)!
+
+    // Prix et km depuis __NEXT_DATA__ (non disponibles dans DOM ou JSON-LD)
+    if (nextDataExtracted.price && nextDataExtracted.price > 0)
+      extractedData.price = nextDataExtracted.price
+    if (nextDataExtracted.mileage != null)
+      extractedData.mileage = nextDataExtracted.mileage
 
     return { imageUrls, extractedData }
   } finally {
