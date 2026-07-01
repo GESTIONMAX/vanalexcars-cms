@@ -310,6 +310,49 @@ export const searchAs24Handler: PayloadHandler = async (req): Promise<Response> 
         .filter((v): v is AS24ScrapedVehicle => v !== null)
     }
 
+    // ── Supplément DOM : listing URLs + dealer depuis les <article> ────────
+    // Toujours exécuté pour enrichir les données manquantes
+    const domData = await page.evaluate((): Array<{ listingUrl: string; dealerName: string; dealerCity: string; imageUrl: string }> => {
+      const results: Array<{ listingUrl: string; dealerName: string; dealerCity: string; imageUrl: string }> = []
+      const articles = document.querySelectorAll('article')
+      for (const article of Array.from(articles)) {
+        // URL individuelle
+        const link = article.querySelector('a[href*="/angebote/"]') as HTMLAnchorElement | null
+        const listingUrl = link?.href ?? ''
+
+        // Dealer — AS24 affiche le nom du vendeur dans divers éléments
+        const dealerEl = article.querySelector('[data-testid*="dealer"], [class*="dealer"], [class*="seller"], [class*="vendor"]') as HTMLElement | null
+        const allText = article.textContent ?? ''
+        // Chercher le nom du concessionnaire (souvent en bas de la carte)
+        const dealerMatch = allText.match(/\n([A-Z][A-Za-zÀ-ÿ\s&.-]{3,50}(?:GmbH|AG|KG|e\.K\.|Auto|Automobil|Zentrum|Garage|Motors)[A-Za-zÀ-ÿ\s&.-]*)\n/)
+        const dealerName = dealerEl?.textContent?.trim() ?? dealerMatch?.[1]?.trim() ?? ''
+
+        // Image principale
+        const img = article.querySelector('img[src*="autoscout24"], img[src*="pictures"]') as HTMLImageElement | null
+        const imageUrl = img?.src ?? ''
+
+        // Ville — souvent après un séparateur dans la carte
+        const cityMatch = allText.match(/(?:^|\n)([A-ZÄÖÜ][a-zäöüA-ZÄÖÜ\s-]{2,30})\s*(?:\(DE\)|\d{5})?(?:\n|$)/)
+        const dealerCity = cityMatch?.[1]?.trim() ?? ''
+
+        results.push({ listingUrl, dealerName, dealerCity, imageUrl })
+      }
+      return results
+    })
+
+    // Fusionner DOM avec les véhicules extraits (par ordre de position)
+    vehicles = vehicles.map((v, i) => {
+      const dom = domData[i]
+      if (!dom) return v
+      return {
+        ...v,
+        listingUrl: v.listingUrl || dom.listingUrl,
+        dealerName: v.dealerName || dom.dealerName,
+        dealerCity: v.dealerCity || dom.dealerCity,
+        imageUrl: v.imageUrl || dom.imageUrl,
+      }
+    })
+
     // ── Stratégie 2 : Interception réseau ──────────────────────────────────
     if (!vehicles.length && interceptedJsons.length) {
       for (const json of interceptedJsons) {
