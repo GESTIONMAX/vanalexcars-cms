@@ -22,6 +22,7 @@ import { ImportMandates } from './collections/ImportMandates'
 import { Leads } from './collections/Leads'
 import { generateMandatePdfHandler } from './endpoints/generateMandatePdf'
 import { searchAs24Handler } from './endpoints/searchAs24'
+import { bulkEnrichHandler } from './endpoints/bulkEnrich'
 
 const filename = fileURLToPath(import.meta.url)
 const dirname = path.dirname(filename)
@@ -89,6 +90,11 @@ export default buildConfig({
       path: '/search-as24',
       method: 'post',
       handler: searchAs24Handler,
+    },
+    {
+      path: '/bulk-enrich',
+      method: 'post',
+      handler: bulkEnrichHandler,
     },
   ],
   secret: process.env.PAYLOAD_SECRET,
