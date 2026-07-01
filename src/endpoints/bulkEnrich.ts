@@ -7,7 +7,7 @@
  * Auth  : x-secret ou Authorization: Bearer {SCRAPER_SECRET}
  */
 
-import type { PayloadHandler } from 'payload'
+import type { PayloadHandler, Where } from 'payload'
 import type { Vehicle } from '@/payload-types'
 import { enrichAs24Listing } from '@/lib/enrichAs24Listing'
 
@@ -97,7 +97,7 @@ export const bulkEnrichHandler: PayloadHandler = async (req): Promise<Response> 
         if (brand) send({ type: 'log', message: `Filtre marque: ${brand}` })
 
         // Récupérer les véhicules AS24
-        const where: Record<string, unknown> = {
+        const where: Where = {
           sourcePlatform: { equals: 'autoscout24.de' },
         }
         if (brand) where['brand'] = { equals: brand }
