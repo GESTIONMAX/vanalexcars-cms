@@ -21,6 +21,7 @@ import { enrichVehicleHandler } from './endpoints/enrichVehicle'
 import { ImportMandates } from './collections/ImportMandates'
 import { Leads } from './collections/Leads'
 import { generateMandatePdfHandler } from './endpoints/generateMandatePdf'
+import { searchAs24Handler } from './endpoints/searchAs24'
 
 const filename = fileURLToPath(import.meta.url)
 const dirname = path.dirname(filename)
@@ -83,6 +84,11 @@ export default buildConfig({
       path: '/generate-mandate-pdf',
       method: 'post',
       handler: generateMandatePdfHandler,
+    },
+    {
+      path: '/search-as24',
+      method: 'post',
+      handler: searchAs24Handler,
     },
   ],
   secret: process.env.PAYLOAD_SECRET,
