@@ -96,6 +96,18 @@ export default buildConfig({
       method: 'post',
       handler: bulkEnrichHandler,
     },
+    {
+      path: '/bulk-enrich',
+      method: 'options',
+      handler: async () => new Response(null, {
+        status: 204,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, x-secret, Authorization',
+        },
+      }),
+    },
   ],
   secret: process.env.PAYLOAD_SECRET,
   sharp,

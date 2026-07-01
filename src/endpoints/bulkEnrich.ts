@@ -59,7 +59,18 @@ function resolveListingUrl(v: Vehicle): string | null {
   return null
 }
 
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, x-secret, Authorization',
+}
+
 export const bulkEnrichHandler: PayloadHandler = async (req): Promise<Response> => {
+  // ── CORS preflight ──────────────────────────────────────────────────────────
+  if (req.method === 'GET' && req.headers.get('access-control-request-method')) {
+    return new Response(null, { status: 204, headers: CORS_HEADERS })
+  }
+
   // ── Auth ────────────────────────────────────────────────────────────────────
   const scraperSecret = process.env.SCRAPER_SECRET
   let body: { minScore?: number; limit?: number; brand?: string; category?: string; secret?: string }
@@ -210,6 +221,7 @@ export const bulkEnrichHandler: PayloadHandler = async (req): Promise<Response> 
       'Cache-Control': 'no-cache, no-transform',
       'Connection': 'keep-alive',
       'X-Accel-Buffering': 'no',
+      ...CORS_HEADERS,
     },
   })
 }
