@@ -950,6 +950,19 @@ export interface Vehicle {
    */
   sourcePlatform?: string | null;
   /**
+   * Identifiant extrait de l'URL ou du JSON AS24
+   */
+  sourceListingId?: string | null;
+  sourceListingIdMethod?: ('json' | 'uuid_explicit' | 'uuid_path' | 'numeric_path') | null;
+  /**
+   * Format : 'autoscout24:<sourceListingId>' — clé primaire anti-doublon
+   */
+  sourceKey?: string | null;
+  /**
+   * URL normalisée sans tracking — clé secondaire anti-doublon
+   */
+  canonicalSourceUrl?: string | null;
+  /**
    * Date de publication sur la plateforme source
    */
   publishedDate?: string | null;
@@ -1634,6 +1647,10 @@ export interface VehiclesSelect<T extends boolean = true> {
   sourceUrl?: T;
   originalListingUrl?: T;
   sourcePlatform?: T;
+  sourceListingId?: T;
+  sourceListingIdMethod?: T;
+  sourceKey?: T;
+  canonicalSourceUrl?: T;
   publishedDate?: T;
   lastScrapedAt?: T;
   syncErrorCount?: T;

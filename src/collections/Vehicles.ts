@@ -359,6 +359,53 @@ export const Vehicles: CollectionConfig = {
       },
     },
     {
+      name: 'sourceListingId',
+      type: 'text',
+      label: 'ID annonce source',
+      admin: {
+        description: "Identifiant extrait de l'URL ou du JSON AS24",
+        readOnly: true,
+        position: 'sidebar',
+      },
+    },
+    {
+      name: 'sourceListingIdMethod',
+      type: 'select',
+      label: 'Méthode extraction ID',
+      options: [
+        { label: 'JSON', value: 'json' },
+        { label: 'UUID explicite (après -id-)', value: 'uuid_explicit' },
+        { label: 'UUID dans le chemin', value: 'uuid_path' },
+        { label: 'ID numérique', value: 'numeric_path' },
+      ],
+      admin: {
+        readOnly: true,
+        position: 'sidebar',
+      },
+    },
+    {
+      name: 'sourceKey',
+      type: 'text',
+      label: 'Clé source (déduplication)',
+      unique: true,
+      admin: {
+        description: "Format : 'autoscout24:<sourceListingId>' — clé primaire anti-doublon",
+        readOnly: true,
+        position: 'sidebar',
+      },
+    },
+    {
+      name: 'canonicalSourceUrl',
+      type: 'text',
+      label: 'URL canonique source',
+      unique: true,
+      admin: {
+        description: 'URL normalisée sans tracking — clé secondaire anti-doublon',
+        readOnly: true,
+        position: 'sidebar',
+      },
+    },
+    {
       name: 'publishedDate',
       type: 'text',
       admin: {

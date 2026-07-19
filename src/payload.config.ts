@@ -23,6 +23,7 @@ import { Leads } from './collections/Leads'
 import { generateMandatePdfHandler } from './endpoints/generateMandatePdf'
 import { searchAs24Handler } from './endpoints/searchAs24'
 import { bulkEnrichHandler } from './endpoints/bulkEnrich'
+import { importVehiclesHandler } from './endpoints/importVehicles'
 
 const filename = fileURLToPath(import.meta.url)
 const dirname = path.dirname(filename)
@@ -95,6 +96,11 @@ export default buildConfig({
       path: '/bulk-enrich',
       method: 'post',
       handler: bulkEnrichHandler,
+    },
+    {
+      path: '/import-vehicles',
+      method: 'post',
+      handler: importVehiclesHandler,
     },
     {
       path: '/bulk-enrich',

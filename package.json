@@ -19,7 +19,10 @@
     "sync:as24-status": "node --env-file=.env --no-deprecation --import tsx/esm src/scripts/sync-as24-status.ts",
     "sync:as24-status:dry": "node --env-file=.env --no-deprecation --import tsx/esm src/scripts/sync-as24-status.ts --dry-run",
     "bulk-enrich": "node --env-file=.env --no-deprecation --import tsx/esm src/scripts/bulk-enrich.ts",
-    "bulk-enrich:dry": "node --env-file=.env --no-deprecation --import tsx/esm src/scripts/bulk-enrich.ts --dry-run"
+    "bulk-enrich:dry": "node --env-file=.env --no-deprecation --import tsx/esm src/scripts/bulk-enrich.ts --dry-run",
+    "backfill:source-keys": "node --env-file=.env --no-deprecation --import tsx/esm src/scripts/backfill-source-keys.ts",
+    "backfill:source-keys:apply": "node --env-file=.env --no-deprecation --import tsx/esm src/scripts/backfill-source-keys.ts --apply",
+    "test": "vitest run"
   },
   "dependencies": {
     "@payloadcms/db-mongodb": "3.84.1",
@@ -37,9 +40,9 @@
     "jsonwebtoken": "9.0.2",
     "next": "15.4.11",
     "payload": "3.84.1",
+    "playwright-core": "^1.49.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "playwright-core": "^1.49.0",
     "sharp": "^0.34.4"
   },
   "devDependencies": {
@@ -51,7 +54,8 @@
     "eslint-config-next": "15.4.11",
     "prettier": "^3.4.2",
     "tsx": "^4.19.2",
-    "typescript": "5.7.2"
+    "typescript": "5.7.2",
+    "vitest": "^4.1.10"
   },
   "engines": {
     "node": "^18.20.2 || >=20.9.0"
