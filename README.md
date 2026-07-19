@@ -6,7 +6,7 @@ Backend headless API-only pour la marketplace VanalexCars, construit avec Payloa
 
 - **Framework** : Next.js 15 + Payload CMS 3.59.1
 - **Langage** : TypeScript 5.7
-- **Base de donnees** : MongoDB Atlas
+- **Base de donnees** : MongoDB (auto-heberge sur Coolify/Hetzner)
 - **Runtime** : Node.js 20+
 - **Package manager** : pnpm
 
@@ -53,7 +53,7 @@ pnpm start
 
 | Variable | Description |
 |----------|-------------|
-| `DATABASE_URI` | URI MongoDB Atlas |
+| `DATABASE_URI` | URI MongoDB (ex: `mongodb://root:PWD@HOST:27017/?directConnection=true`) |
 | `PAYLOAD_SECRET` | Secret Payload (generer avec `openssl rand -base64 32`) |
 | `PAYLOAD_PUBLIC_SERVER_URL` | URL publique du backend |
 
@@ -71,4 +71,4 @@ pnpm lint             # Linter
 
 - **Backend** : Hetzner VPS via Coolify
 - **Frontend** : Netlify (repo separe)
-- **Base de donnees** : MongoDB Atlas
+- **Base de donnees** : MongoDB (auto-heberge sur Coolify/Hetzner)

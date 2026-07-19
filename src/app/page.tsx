@@ -39,11 +39,38 @@ async function getHealthStatus(): Promise<boolean> {
   }
 }
 
+async function checkGitHubConnection(): Promise<boolean> {
+  try {
+    const headers: Record<string, string> = {
+      'User-Agent': 'vanalexcars-backend',
+      Accept: 'application/vnd.github.v3+json',
+    }
+    if (process.env.GITHUB_TOKEN) {
+      headers['Authorization'] = `Bearer ${process.env.GITHUB_TOKEN}`
+    }
+    const res = await fetch('https://api.github.com', {
+      headers,
+      signal: AbortSignal.timeout(5000),
+    })
+    if (!res.ok) {
+      console.warn(`[startup] GitHub API inaccessible — status ${res.status}`)
+      return false
+    }
+    return true
+  } catch (err) {
+    console.warn('[startup] GitHub API inaccessible —', err)
+    return false
+  }
+}
+
 export const dynamic = 'force-dynamic'
 
 export default async function PortalPage() {
   const baseURL = getServerSideURL()
-  const isHealthy = await getHealthStatus()
+  const [isHealthy, isGitHubConnected] = await Promise.all([
+    getHealthStatus(),
+    checkGitHubConnection(),
+  ])
 
   return (
     <div style={styles.body}>
@@ -91,6 +118,12 @@ export default async function PortalPage() {
               endpoint="/api/graphql-playground"
               status={true}
               baseURL={baseURL}
+            />
+            <StatusCard
+              label="GitHub API"
+              endpoint="api.github.com"
+              status={isGitHubConnected}
+              baseURL=""
             />
           </div>
         </section>
