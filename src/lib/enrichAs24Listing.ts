@@ -21,7 +21,7 @@
  */
 
 import { chromium } from 'playwright-core'
-import { extractAs24NextData } from './extractAs24NextData.js'
+import { extractAs24NextData } from './extractAs24NextData'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
