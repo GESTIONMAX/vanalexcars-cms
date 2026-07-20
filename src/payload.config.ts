@@ -26,6 +26,14 @@ import { bulkEnrichHandler } from './endpoints/bulkEnrich'
 import { importVehiclesHandler } from './endpoints/importVehicles'
 import { importSingleListingHandler } from './endpoints/importSingleListing'
 import { SimulatorConfig } from './globals/SimulatorConfig'
+import { MarketStudies } from './collections/MarketStudies'
+import { MarketListings } from './collections/MarketListings'
+import { MarketSnapshots } from './collections/MarketSnapshots'
+import { MarketSnapshotItems } from './collections/MarketSnapshotItems'
+import { marketAnalysisRunHandler } from './endpoints/market-analysis/run'
+import { marketAnalysisJobStatusHandler } from './endpoints/market-analysis/job-status'
+import { runMarketAnalysisTask } from './jobs/runMarketAnalysis'
+import { dispatchMarketAnalysesTask } from './jobs/dispatchMarketAnalyses'
 
 const filename = fileURLToPath(import.meta.url)
 const dirname = path.dirname(filename)
@@ -42,7 +50,7 @@ export default buildConfig({
   db: mongooseAdapter({
     url: process.env.MONGODB_URI || process.env.DATABASE_URI || '',
   }),
-  collections: [Pages, Posts, Media, Categories, Users, Comments, Vehicles, ImportMandates, Leads],
+  collections: [Pages, Posts, Media, Categories, Users, Comments, Vehicles, ImportMandates, Leads, MarketStudies, MarketListings, MarketSnapshots, MarketSnapshotItems],
   cors: [
     getServerSideURL(),
     'http://localhost:3000',
@@ -121,7 +129,20 @@ export default buildConfig({
         },
       }),
     },
+    {
+      path: '/market-analysis/run',
+      method: 'post',
+      handler: marketAnalysisRunHandler,
+    },
+    {
+      path: '/market-analysis/jobs/:jobId',
+      method: 'get',
+      handler: marketAnalysisJobStatusHandler,
+    },
   ],
+  jobs: {
+    tasks: [runMarketAnalysisTask, dispatchMarketAnalysesTask],
+  },
   secret: process.env.PAYLOAD_SECRET,
   sharp,
   typescript: {
