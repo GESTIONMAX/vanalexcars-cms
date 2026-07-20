@@ -25,6 +25,7 @@ import { searchAs24Handler } from './endpoints/searchAs24'
 import { bulkEnrichHandler } from './endpoints/bulkEnrich'
 import { importVehiclesHandler } from './endpoints/importVehicles'
 import { importSingleListingHandler } from './endpoints/importSingleListing'
+import { SimulatorConfig } from './globals/SimulatorConfig'
 
 const filename = fileURLToPath(import.meta.url)
 const dirname = path.dirname(filename)
@@ -60,7 +61,7 @@ export default buildConfig({
     'https://www.import-voiture-allemagne.fr',
     process.env.FRONTEND_URL,
   ].filter((v): v is string => Boolean(v)),
-  globals: [Header, Footer],
+  globals: [Header, Footer, SimulatorConfig],
   plugins: [
     ...plugins,
     // storage-adapter-placeholder
