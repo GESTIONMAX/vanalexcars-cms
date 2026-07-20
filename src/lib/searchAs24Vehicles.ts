@@ -83,6 +83,18 @@ export function toNumber(v: unknown): number {
   return 0
 }
 
+/**
+ * Extrait une année à 4 chiffres depuis des formats variés :
+ * "01/2022" → 2022, "2022-01" → 2022, "2022" → 2022, number → number
+ * Contrairement à toNumber(), ne concatene pas les chiffres ("01/2022" → 12022).
+ */
+export function parseYear(v: unknown): number {
+  if (typeof v === 'number') return v
+  if (typeof v !== 'string') return 0
+  const m = v.match(/\b(19[5-9]\d|20[0-3]\d)\b/)
+  return m ? parseInt(m[1], 10) : 0
+}
+
 export function toString(v: unknown): string {
   return typeof v === 'string' ? v : ''
 }
@@ -112,9 +124,9 @@ export function parseVehicle(raw: Record<string, unknown>): AS24ScrapedVehicle |
     toNumber((attr as Record<string, unknown>).price)
 
   const year =
-    toNumber(raw.firstRegistrationYear) ||
-    toNumber((raw.firstRegistration as Record<string, unknown>)?.year) ||
-    toNumber((attr as Record<string, unknown>).firstRegistrationYear) ||
+    parseYear(raw.firstRegistrationYear) ||
+    parseYear((raw.firstRegistration as Record<string, unknown>)?.year) ||
+    parseYear((attr as Record<string, unknown>).firstRegistrationYear) ||
     undefined
 
   const mileage =

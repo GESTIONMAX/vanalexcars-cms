@@ -479,6 +479,25 @@ export async function enrichAs24Listing(listingUrl: string): Promise<EnrichmentR
       if (nd.price && nd.price > 0) extractedData.price = nd.price
       if (nd.mileage != null) extractedData.mileage = nd.mileage
 
+      // Kilométrage depuis DOM specMap (fallback si __NEXT_DATA__ n'a pas la valeur)
+      if (nd.mileage == null) {
+        const rawMileageStr =
+          specMap['kilometerstand'] ??
+          specMap['kilométrage'] ??
+          specMap['mileage'] ??
+          specMap['km'] ??
+          undefined
+        if (rawMileageStr) {
+          const mMatch = rawMileageStr.match(/([\d.]+)\s*km/i)
+          if (mMatch) {
+            const rawMileageKm = parseInt(mMatch[1].replace(/\./g, ''), 10)
+            if (!isNaN(rawMileageKm) && rawMileageKm > 0) {
+              extractedData.mileage = rawMileageKm
+            }
+          }
+        }
+      }
+
       // ── ÉTAPE 5 : success ─────────────────────────────────────────────
       return { kind: 'success', imageUrls, extractedData }
     } catch (err) {

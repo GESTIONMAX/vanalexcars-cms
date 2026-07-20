@@ -75,6 +75,18 @@ function num(v: unknown): number | null {
   return isFinite(n) && n > 0 ? n : null
 }
 
+/** Parse German/European formatted numbers: "1.116" → 1116, "1.116,5" → 1116.5 */
+function numDe(v: unknown): number | null {
+  if (v == null) return null
+  if (typeof v === 'number') return isFinite(v) && v > 0 ? Math.round(v) : null
+  const s = String(v)
+    .replace(/\./g, '')    // remove thousands separator (period in German)
+    .replace(',', '.')     // decimal comma → dot
+    .replace(/[^\d.]/g, '') // strip non-numeric except dot
+  const n = parseFloat(s)
+  return isFinite(n) && n > 0 ? Math.round(n) : null
+}
+
 function extractPower(typedAttrs: unknown[]): string | null {
   for (const a of typedAttrs) {
     const attr = a as Record<string, unknown>
@@ -103,9 +115,16 @@ function extractAngebote(pageProps: Record<string, unknown>): As24NextDataResult
   const pricePublic = (prices.public ?? prices.dealer ?? {}) as Record<string, unknown>
   const price = num(pricePublic.priceRaw ?? pricePublic.price)
 
-  // Kilométrage
+  // Kilométrage — plusieurs chemins possibles selon la version de l'API AS24
   const mileageRaw = (ld.mileage ?? {}) as Record<string, unknown>
-  const mileage = num(mileageRaw.value ?? ld.mileage)
+  const vehicleMileageRaw = (vehicle.mileage ?? {}) as Record<string, unknown>
+  const mileage =
+    numDe(mileageRaw.value) ??
+    (typeof ld.mileage === 'number' ? numDe(ld.mileage) : null) ??
+    numDe(vehicleMileageRaw.value) ??
+    (typeof vehicle.mileage === 'number' ? numDe(vehicle.mileage) : null) ??
+    numDe((ld as Record<string, unknown>).km) ??
+    null
 
   // Puissance
   const typedAttrs = (vehicle.typedAttributes ?? vehicle.vehicleAttributes ?? []) as unknown[]
@@ -160,7 +179,13 @@ function extractSmyle(pageProps: Record<string, unknown>): As24NextDataResult {
   const typedAttrs = (vehicle.typedAttributes ?? []) as unknown[]
   const power = extractPower(typedAttrs) ?? str(vehicle.power)
 
-  const mileage = num((vehicle.mileage as Record<string, unknown>)?.value ?? vehicle.mileage)
+  // Kilométrage — plusieurs chemins possibles selon la version de l'API AS24
+  const vehicleMileageSmyle = (vehicle.mileage ?? {}) as Record<string, unknown>
+  const mileage =
+    numDe(vehicleMileageSmyle.value) ??
+    (typeof vehicle.mileage === 'number' ? numDe(vehicle.mileage) : null) ??
+    numDe((carDetails as Record<string, unknown>)?.km) ??
+    null
   const exteriorColor = str(vehicle.color ?? vehicle.exteriorColor)
   const interiorColor = str(vehicle.interiorColor)
   const doors = num(vehicle.doors)

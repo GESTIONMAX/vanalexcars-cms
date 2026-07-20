@@ -218,8 +218,17 @@ async function scrapeListingPage(url: string): Promise<ScrapedVehicle | null> {
     if (!year) year = new Date().getFullYear()
 
     // Kilométrage — __NEXT_DATA__ puis DOM fallback (format allemand: "1.116 km" = 1116)
+    // Plusieurs chemins selon la version de l'API AS24
     const mileageObj = (ld.mileage ?? {}) as Record<string, unknown>
-    let mileage = numDe(mileageObj.value ?? mileageObj.mileage ?? null)
+    const vehicleMileageObj = (vehicle.mileage ?? {}) as Record<string, unknown>
+    let mileage =
+      numDe(mileageObj.value) ||
+      (typeof ld.mileage === 'number' ? numDe(ld.mileage) : 0) ||
+      numDe(vehicleMileageObj.value) ||
+      (typeof vehicle.mileage === 'number' ? numDe(vehicle.mileage) : 0) ||
+      numDe((vehicle as Record<string, unknown>).km) ||
+      numDe((ld as Record<string, unknown>).km) ||
+      0
     if (!mileage) {
       // Fallback DOM: chercher "Kilometerstand" ou "km" dans les labels
       mileage = await page.evaluate((): number => {
