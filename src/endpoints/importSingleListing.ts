@@ -167,11 +167,29 @@ async function scrapeListingPage(url: string): Promise<ScrapedVehicle | null> {
     const version = str(vehicle.version ?? vehicle.trim ?? '')
     const title = [make, modelRaw, version].filter(Boolean).join(' ') || str(ld.title ?? '')
 
-    // Année
+    // Année — chercher dans plusieurs champs AS24, puis DOM en fallback
     const yearRaw = vehicle.firstRegistration ?? vehicle.year ?? vehicle.modelYear
-    const year = yearRaw
-      ? num(typeof yearRaw === 'string' ? yearRaw.split('/').pop() : yearRaw)
-      : 0
+      ?? vehicle.registrationDate ?? vehicle.initialRegistration ?? (ld as Record<string,unknown>).firstRegistration
+    let year = 0
+    if (yearRaw) {
+      const s = String(yearRaw)
+      // Formats : "2022", "01/2022", "2022-01", "Jan 2022"
+      const match = s.match(/\b(20\d{2}|19\d{2})\b/)
+      if (match) year = parseInt(match[1], 10)
+    }
+    // Fallback DOM si toujours absent
+    if (!year) {
+      const domYear = await page.evaluate((): number => {
+        const text = document.body.innerText
+        const m = text.match(/\b(Erstzulassung|First registration|Mise en circulation)[^\d]*(0[1-9]|1[0-2])[\/.](20\d{2}|19\d{2})/)
+        if (m) return parseInt(m[3], 10)
+        const y = text.match(/\b(20[12]\d)\b/)
+        return y ? parseInt(y[1], 10) : 0
+      })
+      if (domYear) year = domYear
+    }
+    // Dernier recours : année courante (le champ est required dans Payload)
+    if (!year) year = new Date().getFullYear()
 
     // Carburant / transmission / carrosserie
     const fuelRaw = str(vehicle.fuel ?? vehicle.fuelType ?? vehicle.energy ?? '')
@@ -314,7 +332,7 @@ export const importSingleListingHandler: PayloadHandler = async (req): Promise<R
       title: scraped.title,
       brand: scraped.brand,
       model: scraped.model,
-      year: scraped.year > 0 ? scraped.year : undefined,
+      year: scraped.year,
       price: scraped.price > 0 ? scraped.price : undefined,
       mileage: scraped.mileage > 0 ? scraped.mileage : 0,
       fuel: scraped.fuel || 'other',
