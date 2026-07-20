@@ -3,8 +3,14 @@
  * SSE streaming — enrichit en masse les véhicules AS24 via Playwright.
  * Remplace l'appel Netlify Function (timeout 26s) par un endpoint backend long-lived.
  *
- * Corps : { minScore?, limit?, brand?, category? }
+ * Corps : { minScore?, limit?, brand?, category?, mode? }
+ * mode  : 'resume' (défaut) → skip completed/in_progress
+ *         'all'             → retraite tous les véhicules éligibles
  * Auth  : x-secret ou Authorization: Bearer {SCRAPER_SECRET}
+ *
+ * État persistant par véhicule (C5) :
+ *   enrichmentStatus : pending | in_progress | completed | failed
+ *   enrichmentAttempts, enrichmentLastError, enrichmentStartedAt, enrichmentCompletedAt
  */
 
 import type { PayloadHandler, Where } from 'payload'
@@ -13,6 +19,12 @@ import { enrichAs24Listing } from '@/lib/enrichAs24Listing'
 
 const ALLOWED_HOST =
   /^https?:\/\/(www\.)?autoscout24\.(de|com|fr|it|es|nl|be|at|ch|lu|pl)/
+
+/** Délai entre deux véhicules (ms) */
+const INTER_VEHICLE_DELAY = 1500
+
+/** Délai au-delà duquel un in_progress est considéré bloqué (ms) */
+const STALE_IN_PROGRESS_MS = 10 * 60 * 1000 // 10 min
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms))
@@ -73,7 +85,14 @@ export const bulkEnrichHandler: PayloadHandler = async (req): Promise<Response> 
 
   // ── Auth ────────────────────────────────────────────────────────────────────
   const scraperSecret = process.env.SCRAPER_SECRET
-  let body: { minScore?: number; limit?: number; brand?: string; category?: string; secret?: string }
+  let body: {
+    minScore?: number
+    limit?: number
+    brand?: string
+    category?: string
+    mode?: 'resume' | 'all'
+    secret?: string
+  }
   try {
     body = await (req as unknown as Request).json()
   } catch {
@@ -91,7 +110,7 @@ export const bulkEnrichHandler: PayloadHandler = async (req): Promise<Response> 
     }
   }
 
-  const { minScore = 80, limit = 20, brand, category } = body
+  const { minScore = 80, limit = 20, brand, category, mode = 'resume' } = body
   const { payload } = req
 
   // ── SSE stream ───────────────────────────────────────────────────────────────
@@ -104,10 +123,44 @@ export const bulkEnrichHandler: PayloadHandler = async (req): Promise<Response> 
       }
 
       try {
-        send({ type: 'log', message: `Démarrage enrichissement backend — score cible: <${minScore}% | limite: ${limit}` })
+        send({
+          type: 'log',
+          message: `Démarrage enrichissement (mode: ${mode}) — score cible: <${minScore}% | limite: ${limit}`,
+        })
         if (brand) send({ type: 'log', message: `Filtre marque: ${brand}` })
 
-        // Récupérer les véhicules AS24
+        // ── 1. Reset les in_progress bloqués ────────────────────────────────
+        const staleThreshold = new Date(Date.now() - STALE_IN_PROGRESS_MS).toISOString()
+        const staleResult = await payload.find({
+          collection: 'vehicles',
+          where: {
+            and: [
+              { enrichmentStatus: { equals: 'in_progress' } },
+              { enrichmentStartedAt: { less_than: staleThreshold } },
+            ],
+          },
+          limit: 200,
+          depth: 0,
+        })
+
+        if (staleResult.docs.length > 0) {
+          send({
+            type: 'log',
+            message: `Reset de ${staleResult.docs.length} véhicule(s) bloqués en in_progress depuis > 10 min`,
+          })
+          for (const doc of staleResult.docs) {
+            await payload.update({
+              collection: 'vehicles',
+              id: doc.id as string,
+              data: {
+                enrichmentStatus: 'failed',
+                enrichmentLastError: 'Processus interrompu (timeout ou redémarrage)',
+              },
+            }).catch(() => null)
+          }
+        }
+
+        // ── 2. Récupérer les véhicules AS24 ─────────────────────────────────
         const where: Where = {
           sourcePlatform: { equals: 'autoscout24.de' },
         }
@@ -123,11 +176,21 @@ export const bulkEnrichHandler: PayloadHandler = async (req): Promise<Response> 
 
         send({ type: 'log', message: `${vehicles.length} véhicules AS24 récupérés` })
 
-        // Filtrer et trier par score croissant
+        // ── 3. Filtrer, trier, limiter ───────────────────────────────────────
         const toEnrich = (vehicles as Vehicle[])
-          .filter((v) => resolveListingUrl(v))
+          .filter((v) => {
+            // URL requise
+            if (!resolveListingUrl(v)) return false
+            // Score
+            if (calcScore(v) >= minScore) return false
+            // Mode resume : skip completed et in_progress
+            if (mode === 'resume') {
+              const s = (v as unknown as Record<string, unknown>).enrichmentStatus
+              if (s === 'completed' || s === 'in_progress') return false
+            }
+            return true
+          })
           .map((v) => ({ v, score: calcScore(v) }))
-          .filter(({ score }) => score < minScore)
           .sort((a, b) => a.score - b.score)
           .slice(0, limit)
 
@@ -135,11 +198,25 @@ export const bulkEnrichHandler: PayloadHandler = async (req): Promise<Response> 
 
         const stats = { total: toEnrich.length, enriched: 0, skipped: 0, errors: 0 }
 
+        // ── 4. Traitement par véhicule ───────────────────────────────────────
         for (const { v: vehicle, score: scoreBefore } of toEnrich) {
           send({
             type: 'log',
             message: `Traitement: ${vehicle.title} (score: ${scoreBefore}%)`,
           })
+
+          // Marquer in_progress
+          const currentAttempts =
+            ((vehicle as unknown as Record<string, unknown>).enrichmentAttempts as number) ?? 0
+          await payload.update({
+            collection: 'vehicles',
+            id: vehicle.id,
+            data: {
+              enrichmentStatus: 'in_progress',
+              enrichmentStartedAt: new Date().toISOString(),
+              enrichmentAttempts: currentAttempts + 1,
+            },
+          }).catch(() => null)
 
           // Normaliser l'URL
           let listingUrl = resolveListingUrl(vehicle)!
@@ -157,8 +234,23 @@ export const bulkEnrichHandler: PayloadHandler = async (req): Promise<Response> 
           }
 
           if (!ALLOWED_HOST.test(listingUrl)) {
+            await payload.update({
+              collection: 'vehicles',
+              id: vehicle.id,
+              data: {
+                enrichmentStatus: 'failed',
+                enrichmentLastError: 'URL non autorisée',
+              },
+            }).catch(() => null)
             stats.errors++
-            send({ type: 'vehicle', title: vehicle.title, scoreBefore, scoreAfter: scoreBefore, status: 'error', message: 'URL non autorisée' })
+            send({
+              type: 'vehicle',
+              title: vehicle.title,
+              scoreBefore,
+              scoreAfter: scoreBefore,
+              status: 'error',
+              message: 'URL non autorisée',
+            })
             continue
           }
 
@@ -170,7 +262,7 @@ export const bulkEnrichHandler: PayloadHandler = async (req): Promise<Response> 
             if (imageUrls.length > currentImageCount) patch.imageUrls = imageUrls.map((url) => ({ url }))
             if (extractedData.description && !vehicle.description) patch.description = extractedData.description
             if (extractedData.features?.length && !vehicle.features?.length) patch.features = extractedData.features.map((f) => ({ feature: f }))
-            if (extractedData.specifications?.power && !(vehicle.specifications as Record<string,unknown>)?.power) {
+            if (extractedData.specifications?.power && !(vehicle.specifications as Record<string, unknown>)?.power) {
               patch.specifications = { ...(vehicle.specifications ?? {}), ...extractedData.specifications }
             }
             if (extractedData.exteriorColor && !vehicle.exteriorColor) patch.exteriorColor = extractedData.exteriorColor
@@ -186,9 +278,26 @@ export const bulkEnrichHandler: PayloadHandler = async (req): Promise<Response> 
             const appliedFields = Object.keys(patch).filter((k) => k !== 'lastScrapedAt')
 
             if (appliedFields.length === 0) {
+              await payload.update({
+                collection: 'vehicles',
+                id: vehicle.id,
+                data: {
+                  enrichmentStatus: 'completed',
+                  enrichmentCompletedAt: new Date().toISOString(),
+                },
+              }).catch(() => null)
               stats.skipped++
-              send({ type: 'vehicle', title: vehicle.title, scoreBefore, scoreAfter: scoreBefore, status: 'skipped', message: 'Rien à enrichir' })
+              send({
+                type: 'vehicle',
+                title: vehicle.title,
+                scoreBefore,
+                scoreAfter: scoreBefore,
+                status: 'skipped',
+                message: 'Rien à enrichir',
+              })
             } else {
+              patch.enrichmentStatus = 'completed'
+              patch.enrichmentCompletedAt = new Date().toISOString()
               await payload.update({ collection: 'vehicles', id: vehicle.id, data: patch })
               const updated = await payload.findByID({ collection: 'vehicles', id: vehicle.id, depth: 0 }) as Vehicle
               const scoreAfter = calcScore(updated)
@@ -196,12 +305,27 @@ export const bulkEnrichHandler: PayloadHandler = async (req): Promise<Response> 
               send({ type: 'vehicle', title: vehicle.title, scoreBefore, scoreAfter, status: 'enriched' })
             }
           } catch (err: unknown) {
-            stats.errors++
             const msg = err instanceof Error ? err.message : 'Erreur inconnue'
-            send({ type: 'vehicle', title: vehicle.title, scoreBefore, scoreAfter: scoreBefore, status: 'error', message: msg })
+            await payload.update({
+              collection: 'vehicles',
+              id: vehicle.id,
+              data: {
+                enrichmentStatus: 'failed',
+                enrichmentLastError: msg.slice(0, 500),
+              },
+            }).catch(() => null)
+            stats.errors++
+            send({
+              type: 'vehicle',
+              title: vehicle.title,
+              scoreBefore,
+              scoreAfter: scoreBefore,
+              status: 'error',
+              message: msg,
+            })
           }
 
-          await sleep(1500)
+          await sleep(INTER_VEHICLE_DELAY)
         }
 
         send({ type: 'done', stats })

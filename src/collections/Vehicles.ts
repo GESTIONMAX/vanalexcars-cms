@@ -422,6 +422,57 @@ export const Vehicles: CollectionConfig = {
       },
     },
     {
+      name: 'enrichmentStatus',
+      type: 'select',
+      label: 'État enrichissement',
+      options: [
+        { label: 'En attente', value: 'pending' },
+        { label: 'En cours', value: 'in_progress' },
+        { label: 'Complété', value: 'completed' },
+        { label: 'Échoué', value: 'failed' },
+      ],
+      admin: {
+        description: 'Statut du dernier cycle d\'enrichissement (2e passe AS24)',
+        position: 'sidebar',
+      },
+    },
+    {
+      name: 'enrichmentAttempts',
+      type: 'number',
+      defaultValue: 0,
+      admin: {
+        description: 'Nombre de tentatives d\'enrichissement (total)',
+        position: 'sidebar',
+      },
+    },
+    {
+      name: 'enrichmentLastError',
+      type: 'text',
+      admin: {
+        description: 'Dernière erreur d\'enrichissement',
+        readOnly: true,
+        position: 'sidebar',
+      },
+    },
+    {
+      name: 'enrichmentStartedAt',
+      type: 'date',
+      admin: {
+        description: 'Début du dernier cycle d\'enrichissement',
+        readOnly: true,
+        position: 'sidebar',
+      },
+    },
+    {
+      name: 'enrichmentCompletedAt',
+      type: 'date',
+      admin: {
+        description: 'Fin du dernier cycle d\'enrichissement (succès)',
+        readOnly: true,
+        position: 'sidebar',
+      },
+    },
+    {
       name: 'syncErrorCount',
       type: 'number',
       defaultValue: 0,
