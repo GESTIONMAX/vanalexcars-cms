@@ -32,6 +32,18 @@ function num(v: unknown): number {
   return isFinite(n) && n >= 0 ? n : 0
 }
 
+// Parse German/European formatted numbers: "1.116" → 1116, "1.116,5" → 1116.5
+function numDe(v: unknown): number {
+  if (v == null) return 0
+  if (typeof v === 'number') return isFinite(v) && v >= 0 ? Math.round(v) : 0
+  const s = String(v)
+    .replace(/\./g, '')   // remove thousands separator (period in German)
+    .replace(',', '.')    // decimal comma → dot
+    .replace(/[^\d.]/g, '') // strip non-numeric except dot
+  const n = parseFloat(s)
+  return isFinite(n) && n >= 0 ? Math.round(n) : 0
+}
+
 const VALID_BRANDS = new Set([
   'audi', 'bmw', 'mercedes', 'porsche', 'volkswagen', 'mini',
   'alfa-romeo', 'aston-martin', 'bentley', 'ferrari', 'ford',
@@ -159,7 +171,6 @@ async function scrapeListingPage(url: string): Promise<ScrapedVehicle | null> {
     const location = (ld.location ?? {}) as Record<string, unknown>
     const prices = (ld.prices ?? {}) as Record<string, unknown>
     const pricePublic = ((prices.public ?? prices.dealer ?? {}) as Record<string, unknown>)
-    const mileageRaw = (ld.mileage ?? {}) as Record<string, unknown>
 
     // Titre
     const make = str(vehicle.make ?? vehicle.brand ?? '')
@@ -205,6 +216,33 @@ async function scrapeListingPage(url: string): Promise<ScrapedVehicle | null> {
     }
     // Dernier recours : année courante (le champ est required dans Payload)
     if (!year) year = new Date().getFullYear()
+
+    // Kilométrage — __NEXT_DATA__ puis DOM fallback (format allemand: "1.116 km" = 1116)
+    const mileageObj = (ld.mileage ?? {}) as Record<string, unknown>
+    let mileage = numDe(mileageObj.value ?? mileageObj.mileage ?? null)
+    if (!mileage) {
+      // Fallback DOM: chercher "Kilometerstand" ou "km" dans les labels
+      mileage = await page.evaluate((): number => {
+        const labels = Array.from(document.querySelectorAll('dt, [data-testid], th, .cldt-stage-primary-keyfact'))
+        for (const el of labels) {
+          const text = el.textContent?.toLowerCase() ?? ''
+          if (text.includes('kilometerstand') || text.includes('kilométrage') || text.includes('mileage')) {
+            const val = (el.nextElementSibling ?? el.parentElement?.nextElementSibling)?.textContent ?? ''
+            // German format: "1.116 km" or "116.000 km"
+            const m = val.match(/([\d.,]+)\s*km/i)
+            if (m) {
+              const n = parseInt(m[1].replace(/\./g, '').replace(',', ''), 10)
+              if (!isNaN(n)) return n
+            }
+          }
+        }
+        // Scan body text for pattern "Kilometerstand 1.116 km"
+        const body = document.body.innerText
+        const m = body.match(/Kilometerstand[^\d]*([\d.]+)\s*km/i)
+        if (m) return parseInt(m[1].replace(/\./g, ''), 10)
+        return 0
+      })
+    }
 
     // Carburant / transmission / carrosserie
     const fuelRaw = str(vehicle.fuel ?? vehicle.fuelType ?? vehicle.energy ?? '')
@@ -264,7 +302,7 @@ async function scrapeListingPage(url: string): Promise<ScrapedVehicle | null> {
       model: modelRaw,
       year,
       price: num(pricePublic.priceRaw ?? pricePublic.price ?? 0),
-      mileage: num(mileageRaw.value ?? ld.mileage ?? 0),
+      mileage,
       fuel: mapFuel(fuelRaw),
       transmission: mapTransmission(transRaw),
       bodyType: mapBodyType(bodyRaw),

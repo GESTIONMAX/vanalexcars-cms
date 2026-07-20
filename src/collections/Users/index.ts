@@ -21,6 +21,20 @@ export const Users: CollectionConfig = {
       name: 'name',
       type: 'text',
     },
+    {
+      name: 'role',
+      type: 'select',
+      required: true,
+      defaultValue: 'admin',
+      saveToJWT: true,
+      options: [
+        { label: 'Administrateur', value: 'admin' },
+        { label: 'Viewer', value: 'viewer' },
+      ],
+      admin: {
+        position: 'sidebar',
+      },
+    },
   ],
   timestamps: true,
 }
