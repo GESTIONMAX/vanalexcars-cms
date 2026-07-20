@@ -490,6 +490,30 @@ export const Vehicles: CollectionConfig = {
       },
     },
     {
+      name: 'sourceInactiveAt',
+      type: 'date',
+      label: 'Date d\'inactivation source',
+      admin: {
+        description: 'Date de détection de la suppression de l\'annonce source (HTTP 404 ou 410)',
+        readOnly: true,
+        position: 'sidebar',
+      },
+    },
+    {
+      name: 'sourceInactiveReason',
+      type: 'select',
+      label: 'Raison d\'inactivation source',
+      options: [
+        { label: 'HTTP 404 (annonce introuvable)', value: 'source_404' },
+        { label: 'HTTP 410 (annonce supprimée définitivement)', value: 'source_410' },
+      ],
+      admin: {
+        description: 'Code HTTP ayant déclenché l\'inactivation du véhicule',
+        readOnly: true,
+        position: 'sidebar',
+      },
+    },
+    {
       name: 'imageUrls',
       type: 'array',
       label: 'URLs des Images',

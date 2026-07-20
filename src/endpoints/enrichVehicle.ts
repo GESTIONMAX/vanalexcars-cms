@@ -5,7 +5,11 @@
  *
  * Wrapper HTTP autour de enrichAs24Listing (lib/enrichAs24Listing.ts).
  * Récupère les images + données texte d'une fiche AutoScout24 via Playwright,
- * puis met à jour le véhicule en base (sans écraser les champs déjà renseignés).
+ * puis met à jour le véhicule en base selon le résultat :
+ *
+ *   listing_removed → status=inactive, sourceInactiveAt, sourceInactiveReason
+ *   temporary_error → enrichmentStatus=failed, enrichmentLastError (statut métier inchangé)
+ *   success         → patch partiel sans écrasement des champs déjà renseignés
  *
  * Corps : { vehicleId: string, dryRun?: boolean, secret?: string }
  * Réponse : { imageUrls, scrapedCount, extractedData, appliedFields }
@@ -14,6 +18,11 @@
 import type { PayloadHandler } from 'payload'
 import type { Vehicle } from '@/payload-types'
 import { enrichAs24Listing } from '@/lib/enrichAs24Listing'
+import {
+  buildEnrichmentSuccessPatch,
+  buildListingRemovedPatch,
+  buildTemporaryErrorPatch,
+} from '@/lib/buildEnrichmentPatch'
 
 const ALLOWED_HOST =
   /^https?:\/\/(www\.)?autoscout24\.(de|com|fr|it|es|nl|be|at|ch|lu|pl)/
@@ -71,89 +80,71 @@ export const enrichVehicleHandler: PayloadHandler = async (req): Promise<Respons
       { status: 400 },
     )
 
-  // ── Scraping ──────────────────────────────────────────────────────────────
+  // ── Scraping + switch sur le résultat ────────────────────────────────────
   try {
-    const { imageUrls, extractedData } = await enrichAs24Listing(listingUrl)
+    const result = await enrichAs24Listing(listingUrl)
 
+    // ── listing_removed : annonce définitivement supprimée ─────────────────
+    if (result.kind === 'listing_removed') {
+      const removedPatch = buildListingRemovedPatch(result)
+      if (!dryRun) {
+        await payload.update({ collection: 'vehicles', id: vehicleId, data: removedPatch })
+      }
+      return Response.json({
+        listingRemoved: true,
+        dryRun,
+        vehicleId,
+        httpStatus: result.httpStatus,
+        patch: removedPatch,
+      })
+    }
+
+    // ── temporary_error : erreur transitoire, statut métier inchangé ───────
+    if (result.kind === 'temporary_error') {
+      const errorPatch = buildTemporaryErrorPatch(result)
+      if (!dryRun) {
+        await payload.update({ collection: 'vehicles', id: vehicleId, data: errorPatch })
+      }
+      return Response.json(
+        {
+          temporaryError: true,
+          dryRun,
+          vehicleId,
+          code: result.code,
+          message: result.message,
+        },
+        { status: 502 },
+      )
+    }
+
+    // ── success : enrichissement normal ────────────────────────────────────
     if (dryRun) {
       return Response.json({
         dryRun: true,
         vehicleId,
-        scrapedCount: imageUrls.length,
-        imageUrls,
-        extractedData,
+        scrapedCount: result.imageUrls.length,
+        imageUrls: result.imageUrls,
+        extractedData: result.extractedData,
       })
     }
 
-    // ── Merge : ne jamais écraser un champ déjà renseigné ─────────────────
-    const patch: Record<string, unknown> = {}
+    const { patch, appliedFields, noop } = buildEnrichmentSuccessPatch(result, vehicle)
 
-    // Images : enrichir seulement si on a trouvé plus que ce qui est en base
-    const currentImageCount = vehicle.imageUrls?.length ?? 0
-    if (imageUrls.length > currentImageCount) {
-      patch.imageUrls = imageUrls.map((url) => ({ url }))
+    if (!noop) {
+      patch.enrichmentStatus = 'completed'
+      patch.enrichmentCompletedAt = new Date().toISOString()
     }
-
-    // Description
-    if (extractedData.description && !vehicle.description) {
-      patch.description = extractedData.description
-    }
-
-    // Équipements
-    if (extractedData.features?.length && !(vehicle.features?.length)) {
-      patch.features = extractedData.features.map((f) => ({ feature: f }))
-    }
-
-    // Spécifications techniques
-    if (extractedData.specifications?.power && !vehicle.specifications?.power) {
-      patch.specifications = {
-        ...(vehicle.specifications ?? {}),
-        ...extractedData.specifications,
-      }
-    }
-
-    // Couleurs
-    if (extractedData.exteriorColor && !vehicle.exteriorColor) {
-      patch.exteriorColor = extractedData.exteriorColor
-    }
-    if (extractedData.interiorColor && !vehicle.interiorColor) {
-      patch.interiorColor = extractedData.interiorColor
-    }
-
-    // Portes / places
-    if (extractedData.doors && !vehicle.doors) patch.doors = extractedData.doors
-    if (extractedData.seats && !vehicle.seats) patch.seats = extractedData.seats
-
-    // Concessionnaire
-    if (extractedData.dealer && !vehicle.dealer) {
-      patch.dealer = extractedData.dealer
-    }
-    if (extractedData.dealerCity && !vehicle.dealerCity) {
-      patch.dealerCity = extractedData.dealerCity
-    }
-
-    // Prix et kilométrage (depuis __NEXT_DATA__ de la fiche individuelle)
-    if (extractedData.price && extractedData.price > 0 && !(vehicle.price && vehicle.price > 0)) {
-      patch.price = extractedData.price
-    }
-    if (extractedData.mileage != null && !(vehicle.mileage != null && vehicle.mileage > 0)) {
-      patch.mileage = extractedData.mileage
-    }
-
-    // Horodatage de passage
-    patch.lastScrapedAt = new Date().toISOString()
 
     await payload.update({ collection: 'vehicles', id: vehicleId, data: patch })
-
-    const appliedFields = Object.keys(patch).filter((k) => k !== 'lastScrapedAt')
 
     return Response.json({
       success: true,
       vehicleId,
-      scrapedCount: imageUrls.length,
-      imageUrls,
-      extractedData,
+      scrapedCount: result.imageUrls.length,
+      imageUrls: result.imageUrls,
+      extractedData: result.extractedData,
       appliedFields,
+      noop,
     })
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Enrichment failed'

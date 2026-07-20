@@ -4,40 +4,77 @@
  * Logique Playwright partagée pour enrichir une fiche AutoScout24.
  * Utilisée par :
  *   - l'endpoint HTTP  POST /api/enrich-vehicle
+ *   - l'endpoint SSE   POST /api/bulk-enrich
  *   - le script batch  src/scripts/bulk-enrich.ts
  *
  * Stratégie en 3 passes (ordre de fiabilité décroissant) :
  *   Passe 0 — Interception XHR  : images (primaire, toujours la plus complète)
  *   Passe 1 — JSON-LD           : images (fallback) + description
  *   Passe 2 — DOM               : équipements, specs techniques, concessionnaire
+ *
+ * Flux de décision du résultat :
+ *   1. erreur de navigation (timeout, réseau, null)
+ *   2. statut HTTP (404 → listing_removed, 410 → listing_removed, 403/429/5xx → temporary_error)
+ *   3. détection challenge/CAPTCHA
+ *   4. parsing
+ *   5. success
  */
 
 import { chromium } from 'playwright-core'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-export interface As24EnrichedData {
-  /** URLs images CDN AS24, normalisées (sans suffixe /NxN.ext) */
-  imageUrls: string[]
-  /** Données texte extraites de la fiche */
-  extractedData: {
-    description?: string
-    features?: string[]
-    specifications?: {
-      power?: string
-      powerKw?: number
-      powerHp?: number
-    }
-    exteriorColor?: string
-    interiorColor?: string
-    doors?: number
-    seats?: number
-    dealer?: string
-    dealerCity?: string
-    price?: number
-    mileage?: number
+/** Données texte extraites d'une fiche AS24 */
+export interface As24ExtractedData {
+  description?: string
+  features?: string[]
+  specifications?: {
+    power?: string
+    powerKw?: number
+    powerHp?: number
   }
+  exteriorColor?: string
+  interiorColor?: string
+  doors?: number
+  seats?: number
+  dealer?: string
+  dealerCity?: string
+  price?: number
+  mileage?: number
 }
+
+/** @deprecated Utilisez EnrichmentResult à la place */
+export interface As24EnrichedData {
+  imageUrls: string[]
+  extractedData: As24ExtractedData
+}
+
+export type TemporaryErrorCode =
+  | 'http_403'       // Accès refusé (Cloudflare, robot check)
+  | 'http_429'       // Rate-limiting
+  | 'http_5xx'       // Erreur serveur AS24
+  | 'timeout'        // page.goto() a expiré
+  | 'network_error'  // DNS, connexion refusée, ou response === null
+  | 'challenge'      // Page CAPTCHA / bot-challenge détectée (HTTP 200)
+  | 'parsing_error'  // Erreur interne d'analyse (exception JS côté évaluation)
+
+export type EnrichmentResult =
+  | {
+      kind: 'success'
+      imageUrls: string[]
+      extractedData: As24ExtractedData
+    }
+  | {
+      kind: 'listing_removed'
+      /** Statut HTTP exact retourné par AS24 */
+      httpStatus: 404 | 410
+    }
+  | {
+      kind: 'temporary_error'
+      code: TemporaryErrorCode
+      /** Message lisible pour enrichmentLastError */
+      message: string
+    }
 
 // ── Constantes ───────────────────────────────────────────────────────────────
 
@@ -47,6 +84,16 @@ const CDN_PATTERN =
 /** Supprime le suffixe de taille AS24 (/1920x1080.webp, /120x90.jpg…) */
 const normalizeAs24Url = (url: string) =>
   url.replace(/\/\d+x\d+\.(jpg|jpeg|webp|png)$/i, '')
+
+/** Marqueurs indiquant une page CAPTCHA / bot-challenge AS24 / Cloudflare */
+const CHALLENGE_MARKERS = [
+  'cf-challenge-running',
+  'cf_chl_opt',
+  'challenge-platform',
+  'ray-id',
+  '#challenge-error-title',
+  'id="challenge-form"',
+]
 
 // ── Extraction de données depuis le DOM ──────────────────────────────────────
 
@@ -65,7 +112,7 @@ function parsePower(raw: string): { power: string; powerKw?: number; powerHp?: n
 
 // ── Fonction principale ───────────────────────────────────────────────────────
 
-export async function enrichAs24Listing(listingUrl: string): Promise<As24EnrichedData> {
+export async function enrichAs24Listing(listingUrl: string): Promise<EnrichmentResult> {
   const executablePath =
     process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ?? '/usr/bin/chromium'
 
@@ -122,318 +169,404 @@ export async function enrichAs24Listing(listingUrl: string): Promise<As24Enriche
       }
     })
 
-    // domcontentloaded — AS24 SPA ne déclenche jamais networkidle
-    await page.goto(listingUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+    // ── ÉTAPE 1 : Navigation + capture du statut HTTP ─────────────────────
+    // Flux : erreur de navigation → statut HTTP → challenge → parsing → success
+
+    let mainResponse: Awaited<ReturnType<typeof page.goto>>
+
+    try {
+      mainResponse = await page.goto(listingUrl, {
+        waitUntil: 'domcontentloaded',
+        timeout: 30_000,
+      })
+    } catch (err) {
+      // TimeoutError Playwright
+      if (err instanceof Error && err.name === 'TimeoutError') {
+        return {
+          kind: 'temporary_error',
+          code: 'timeout',
+          message: `Navigation timeout après 30s : ${err.message}`,
+        }
+      }
+      // Erreur réseau (DNS, connexion refusée…)
+      return {
+        kind: 'temporary_error',
+        code: 'network_error',
+        message: `Erreur réseau lors de la navigation : ${String(err)}`,
+      }
+    }
+
+    // page.goto() peut retourner null (navigation interrompue sans réponse)
+    if (mainResponse === null) {
+      return {
+        kind: 'temporary_error',
+        code: 'network_error',
+        message: 'Navigation completed without a main document response',
+      }
+    }
+
+    // ── ÉTAPE 2 : Vérification du statut HTTP ─────────────────────────────
+    const httpStatus = mainResponse.status()
+
+    if (httpStatus === 404) {
+      return { kind: 'listing_removed', httpStatus: 404 }
+    }
+    if (httpStatus === 410) {
+      return { kind: 'listing_removed', httpStatus: 410 }
+    }
+    if (httpStatus === 403) {
+      return {
+        kind: 'temporary_error',
+        code: 'http_403',
+        message: `HTTP 403 — accès refusé (robot check ou Cloudflare)`,
+      }
+    }
+    if (httpStatus === 429) {
+      return {
+        kind: 'temporary_error',
+        code: 'http_429',
+        message: `HTTP 429 — rate-limiting AS24`,
+      }
+    }
+    if (httpStatus >= 500 && httpStatus <= 599) {
+      return {
+        kind: 'temporary_error',
+        code: 'http_5xx',
+        message: `HTTP ${httpStatus} — erreur serveur AS24`,
+      }
+    }
 
     // Attendre que les XHR de la fiche soient chargés (~6 s en prod)
     await new Promise((r) => setTimeout(r, 6_000))
 
-    // ── PASSE 0b : __NEXT_DATA__ — données SSR structurées ────────────────
-    // Contient souvent price, power, dealer, km directement dans le JSON
-    interface NextDataExtracted {
-      price?: number
-      mileage?: number
-      power?: string
-      dealerName?: string
-      dealerCity?: string
-      exteriorColor?: string
-      interiorColor?: string
-      doors?: number
-      seats?: number
-      description?: string
+    // ── ÉTAPE 3 : Détection challenge / CAPTCHA ───────────────────────────
+    // Précède le parsing pour qu'un CAPTCHA ne soit pas classé parsing_error
+    const pageSource = await page.content()
+    const isChallenge = CHALLENGE_MARKERS.some((marker) =>
+      pageSource.toLowerCase().includes(marker.toLowerCase()),
+    )
+    if (isChallenge) {
+      return {
+        kind: 'temporary_error',
+        code: 'challenge',
+        message: 'Page CAPTCHA / bot-challenge détectée (HTTP 200 avec blocage Cloudflare)',
+      }
     }
 
-    const nextDataExtracted: NextDataExtracted = await page.evaluate((): NextDataExtracted => {
-      const el = document.querySelector('#__NEXT_DATA__')
-      if (!el?.textContent) return {}
-      try {
-        const json = JSON.parse(el.textContent)
-        // Traverser récursivement pour trouver les données véhicule
-        function findVehicleData(obj: unknown, depth = 0): NextDataExtracted {
-          if (!obj || typeof obj !== 'object' || depth > 8) return {}
-          const rec = obj as Record<string, unknown>
+    // ── ÉTAPE 4 : Parsing ─────────────────────────────────────────────────
 
-          // Détection : objet contenant des champs véhicule AS24
-          const hasMake = 'make' in rec || 'brand' in rec
-          const hasPrice = 'price' in rec || ('pricing' in rec)
-          if (hasMake || hasPrice) {
-            const pricing = (rec.pricing ?? rec.price) as Record<string,unknown> | number | undefined
-            const price = typeof pricing === 'number' ? pricing
-              : typeof (pricing as Record<string,unknown>)?.gross === 'number' ? (pricing as Record<string,unknown>).gross as number
-              : undefined
-            const mileage = (rec.mileage as Record<string,unknown>)?.value as number ?? rec.mileage as number ?? undefined
-            const seller = (rec.seller ?? rec.dealer ?? rec.contact ?? {}) as Record<string,unknown>
-            const loc = (seller.location ?? seller) as Record<string,unknown>
-            const attr = (rec.attributes ?? rec.vehicle ?? {}) as Record<string,unknown>
+    try {
+      // ── PASSE 0b : __NEXT_DATA__ — données SSR structurées ──────────────
+      interface NextDataExtracted {
+        price?: number
+        mileage?: number
+        power?: string
+        dealerName?: string
+        dealerCity?: string
+        exteriorColor?: string
+        interiorColor?: string
+        doors?: number
+        seats?: number
+      }
 
-            // Puissance : chercher dans typedAttributes ou attributes
-            const typedAttrs = (rec.typedAttributes ?? rec.vehicleAttributes ?? []) as Array<Record<string,unknown>>
-            let power: string | undefined
-            for (const a of typedAttrs) {
-              const key = String(a.key ?? a.id ?? '').toLowerCase()
-              if (key.includes('power') || key.includes('leistung') || key === 'ps' || key === 'kw') {
-                power = String(a.value ?? a.formattedValue ?? '')
-                break
+      const nextDataExtracted: NextDataExtracted = await page.evaluate((): NextDataExtracted => {
+        const el = document.querySelector('#__NEXT_DATA__')
+        if (!el?.textContent) return {}
+        try {
+          const json = JSON.parse(el.textContent)
+          function findVehicleData(obj: unknown, depth = 0): NextDataExtracted {
+            if (!obj || typeof obj !== 'object' || depth > 8) return {}
+            const rec = obj as Record<string, unknown>
+
+            const hasMake = 'make' in rec || 'brand' in rec
+            const hasPrice = 'price' in rec || 'pricing' in rec
+            if (hasMake || hasPrice) {
+              const pricing = (rec.pricing ?? rec.price) as Record<string, unknown> | number | undefined
+              const price =
+                typeof pricing === 'number'
+                  ? pricing
+                  : typeof (pricing as Record<string, unknown>)?.gross === 'number'
+                    ? ((pricing as Record<string, unknown>).gross as number)
+                    : undefined
+              const mileage =
+                ((rec.mileage as Record<string, unknown>)?.value as number) ??
+                (rec.mileage as number) ??
+                undefined
+              const seller = (rec.seller ?? rec.dealer ?? rec.contact ?? {}) as Record<string, unknown>
+              const loc = (seller.location ?? seller) as Record<string, unknown>
+              const attr = (rec.attributes ?? rec.vehicle ?? {}) as Record<string, unknown>
+
+              const typedAttrs = (rec.typedAttributes ?? rec.vehicleAttributes ?? []) as Array<
+                Record<string, unknown>
+              >
+              let power: string | undefined
+              for (const a of typedAttrs) {
+                const key = String(a.key ?? a.id ?? '').toLowerCase()
+                if (key.includes('power') || key.includes('leistung') || key === 'ps' || key === 'kw') {
+                  power = String(a.value ?? a.formattedValue ?? '')
+                  break
+                }
+              }
+              if (!power) {
+                const rawPower = attr.power ?? attr.leistung ?? rec.power
+                if (rawPower) power = String(rawPower)
+              }
+
+              const exteriorColor =
+                String(attr.color ?? attr.exteriorColor ?? rec.color ?? rec.exteriorColor ?? '') || undefined
+              const interiorColor =
+                String(attr.interiorColor ?? rec.interiorColor ?? '') || undefined
+              const doors = Number(attr.doors ?? rec.doors) || undefined
+              const seats = Number(attr.seats ?? rec.seats) || undefined
+
+              return {
+                price: price as number | undefined,
+                mileage: mileage as number | undefined,
+                power: power || undefined,
+                dealerName: String(seller.name ?? seller.companyName ?? '').trim() || undefined,
+                dealerCity: String(loc.city ?? loc.locality ?? '').trim() || undefined,
+                exteriorColor: exteriorColor || undefined,
+                interiorColor: interiorColor || undefined,
+                doors,
+                seats,
               }
             }
-            if (!power) {
-              const rawPower = attr.power ?? attr.leistung ?? rec.power
-              if (rawPower) power = String(rawPower)
+
+            for (const key of [
+              'pageProps',
+              'props',
+              'data',
+              'listing',
+              'vehicle',
+              'classified',
+              'ad',
+            ]) {
+              if (rec[key] && typeof rec[key] === 'object') {
+                const found = findVehicleData(rec[key], depth + 1)
+                if (found.price || found.power || found.dealerName) return found
+              }
             }
 
-            const exteriorColor = String(
-              attr.color ?? attr.exteriorColor ?? rec.color ?? rec.exteriorColor ?? ''
-            ) || undefined
-            const interiorColor = String(
-              attr.interiorColor ?? rec.interiorColor ?? ''
-            ) || undefined
-            const doors = Number(attr.doors ?? rec.doors) || undefined
-            const seats = Number(attr.seats ?? rec.seats) || undefined
-
-            return {
-              price: price as number | undefined,
-              mileage: mileage as number | undefined,
-              power: power || undefined,
-              dealerName: String(seller.name ?? seller.companyName ?? '').trim() || undefined,
-              dealerCity: String(loc.city ?? loc.locality ?? '').trim() || undefined,
-              exteriorColor: exteriorColor || undefined,
-              interiorColor: interiorColor || undefined,
-              doors,
-              seats,
-            }
+            return {}
           }
-
-          // Chercher dans les sous-objets connus
-          for (const key of ['pageProps', 'props', 'data', 'listing', 'vehicle', 'classified', 'ad']) {
-            if (rec[key] && typeof rec[key] === 'object') {
-              const found = findVehicleData(rec[key], depth + 1)
-              if (found.price || found.power || found.dealerName) return found
-            }
-          }
-
+          return findVehicleData(json)
+        } catch {
           return {}
         }
-        return findVehicleData(json)
-      } catch { return {} }
-    })
+      })
 
-    // ── PASSE 1 : JSON-LD ─────────────────────────────────────────────────
-    // Fallback images + extraction de la description (champ stable dans le JSON-LD AS24)
+      // ── PASSE 1 : JSON-LD ──────────────────────────────────────────────
+      interface JsonLdVehicle {
+        images: string[]
+        description?: string
+      }
 
-    interface JsonLdVehicle {
-      images: string[]
-      description?: string
-    }
-
-    const jsonLdData: JsonLdVehicle | null = await page.evaluate(() => {
-      for (const script of Array.from(
-        document.querySelectorAll('script[type="application/ld+json"]'),
-      )) {
-        try {
-          const data = JSON.parse(script.textContent ?? '')
-          const nodes: unknown[] = data['@graph'] ? data['@graph'] : [data]
-          for (const node of nodes) {
-            if (
-              node !== null &&
-              typeof node === 'object' &&
-              ['Vehicle', 'Car'].includes((node as Record<string, unknown>)['@type'] as string)
-            ) {
-              const n = node as Record<string, unknown>
-              const imgs = n['image']
-              const images: string[] = Array.isArray(imgs)
-                ? (imgs as string[])
-                : typeof imgs === 'string'
-                  ? [imgs]
-                  : []
-              return {
-                images,
-                description:
-                  typeof n['description'] === 'string' ? n['description'].trim() : undefined,
+      const jsonLdData: JsonLdVehicle | null = await page.evaluate(() => {
+        for (const script of Array.from(
+          document.querySelectorAll('script[type="application/ld+json"]'),
+        )) {
+          try {
+            const data = JSON.parse(script.textContent ?? '')
+            const nodes: unknown[] = data['@graph'] ? data['@graph'] : [data]
+            for (const node of nodes) {
+              if (
+                node !== null &&
+                typeof node === 'object' &&
+                ['Vehicle', 'Car'].includes(
+                  (node as Record<string, unknown>)['@type'] as string,
+                )
+              ) {
+                const n = node as Record<string, unknown>
+                const imgs = n['image']
+                const images: string[] = Array.isArray(imgs)
+                  ? (imgs as string[])
+                  : typeof imgs === 'string'
+                    ? [imgs]
+                    : []
+                return {
+                  images,
+                  description:
+                    typeof n['description'] === 'string' ? n['description'].trim() : undefined,
+                }
               }
             }
+          } catch {
+            /* skip */
           }
+        }
+        return null
+      })
+
+      // ── PASSE 2 : DOM ──────────────────────────────────────────────────
+      interface DomExtracted {
+        features: string[]
+        specMap: Record<string, string>
+        dealerName?: string
+        dealerCity?: string
+      }
+
+      const domData: DomExtracted = await page.evaluate(() => {
+        const features: string[] = []
+        for (const ul of Array.from(document.querySelectorAll('ul'))) {
+          const items = Array.from(ul.querySelectorAll('li'))
+            .map((li) => li.textContent?.trim() ?? '')
+            .filter((t) => t.length >= 3 && t.length <= 80 && !/^\d+$/.test(t))
+          if (items.length >= 5) {
+            for (const item of items) {
+              if (!features.includes(item)) features.push(item)
+            }
+          }
+        }
+
+        const specMap: Record<string, string> = {}
+        for (const dt of Array.from(document.querySelectorAll('dt'))) {
+          const dd = dt.nextElementSibling
+          if (dd?.tagName === 'DD') {
+            const key = dt.textContent?.trim().toLowerCase() ?? ''
+            const val = dd.textContent?.trim() ?? ''
+            if (key && val) specMap[key] = val
+          }
+        }
+        for (const row of Array.from(document.querySelectorAll('tr'))) {
+          const cells = Array.from(row.querySelectorAll('th, td'))
+          if (cells.length === 2) {
+            const key = cells[0].textContent?.trim().toLowerCase() ?? ''
+            const val = cells[1].textContent?.trim() ?? ''
+            if (key && val) specMap[key] = val
+          }
+        }
+
+        const dealerSelectors = [
+          '[data-testid="vendor-contact-info"]',
+          '[data-testid="seller-info"]',
+          '[class*="DealerInfo"]',
+          '[class*="dealer-info"]',
+          '[class*="SellerInfo"]',
+          '.seller-info',
+        ]
+        let dealerName: string | undefined
+        let dealerCity: string | undefined
+        for (const sel of dealerSelectors) {
+          const el = document.querySelector(sel)
+          if (el) {
+            const text = el.textContent?.trim() ?? ''
+            const lines = text
+              .split('\n')
+              .map((l) => l.trim())
+              .filter(Boolean)
+            if (lines.length >= 1) dealerName = lines[0].slice(0, 100)
+            if (lines.length >= 2) dealerCity = lines[1].slice(0, 80)
+            break
+          }
+        }
+
+        return { features, specMap, dealerName, dealerCity }
+      })
+
+      // ── Construction des URLs d'images finales ─────────────────────────
+
+      let rawImageUrls: string[] = [...interceptedImages]
+
+      if (!rawImageUrls.length && jsonLdData?.images.length) {
+        rawImageUrls = jsonLdData.images
+      }
+
+      if (!rawImageUrls.length) {
+        try {
+          await page.waitForSelector('img[src*="autoscout24"]', { timeout: 8_000 })
         } catch {
-          /* skip */
+          /* pas d'images trouvées — on continue avec tableau vide */
         }
-      }
-      return null
-    })
-
-    // ── PASSE 2 : DOM ─────────────────────────────────────────────────────
-    // Équipements, specs techniques, concessionnaire
-
-    interface DomExtracted {
-      features: string[]
-      specMap: Record<string, string>
-      dealerName?: string
-      dealerCity?: string
-    }
-
-    const domData: DomExtracted = await page.evaluate(() => {
-      // Équipements — heuristique : listes <ul> avec ≥5 items courts
-      const features: string[] = []
-      for (const ul of Array.from(document.querySelectorAll('ul'))) {
-        const items = Array.from(ul.querySelectorAll('li'))
-          .map((li) => li.textContent?.trim() ?? '')
-          .filter((t) => t.length >= 3 && t.length <= 80 && !/^\d+$/.test(t))
-        if (items.length >= 5) {
-          for (const item of items) {
-            if (!features.includes(item)) features.push(item)
-          }
-        }
+        rawImageUrls = await page.evaluate(() =>
+          [
+            ...new Set(
+              Array.from(document.querySelectorAll('img'))
+                .map(
+                  (img) =>
+                    (img as HTMLImageElement).src || img.getAttribute('data-src') || '',
+                )
+                .filter(
+                  (src) =>
+                    src.includes('autoscout24') &&
+                    /\.(jpg|jpeg|webp|png)/i.test(src) &&
+                    !src.includes('logo'),
+                ),
+            ),
+          ],
+        )
       }
 
-      // Specs — <dl><dt>…</dt><dd>…</dd></dl> et <table><tr><th/td></tr></table>
-      const specMap: Record<string, string> = {}
-      for (const dt of Array.from(document.querySelectorAll('dt'))) {
-        const dd = dt.nextElementSibling
-        if (dd?.tagName === 'DD') {
-          const key = dt.textContent?.trim().toLowerCase() ?? ''
-          const val = dd.textContent?.trim() ?? ''
-          if (key && val) specMap[key] = val
-        }
-      }
-      for (const row of Array.from(document.querySelectorAll('tr'))) {
-        const cells = Array.from(row.querySelectorAll('th, td'))
-        if (cells.length === 2) {
-          const key = cells[0].textContent?.trim().toLowerCase() ?? ''
-          const val = cells[1].textContent?.trim() ?? ''
-          if (key && val) specMap[key] = val
-        }
-      }
-
-      // Concessionnaire — data-testid prioritaire, sinon heuristiques de classe
-      const dealerSelectors = [
-        '[data-testid="vendor-contact-info"]',
-        '[data-testid="seller-info"]',
-        '[class*="DealerInfo"]',
-        '[class*="dealer-info"]',
-        '[class*="SellerInfo"]',
-        '.seller-info',
+      const imageUrls = [
+        ...new Set(
+          rawImageUrls
+            .map(normalizeAs24Url)
+            .filter((u) => u.includes('prod.pictures.autoscout24.net/listing-images/')),
+        ),
       ]
-      let dealerName: string | undefined
-      let dealerCity: string | undefined
-      for (const sel of dealerSelectors) {
-        const el = document.querySelector(sel)
-        if (el) {
-          const text = el.textContent?.trim() ?? ''
-          // Premier bloc de texte → nom, second → ville approximativement
-          const lines = text.split('\n').map((l) => l.trim()).filter(Boolean)
-          if (lines.length >= 1) dealerName = lines[0].slice(0, 100)
-          if (lines.length >= 2) dealerCity = lines[1].slice(0, 80)
-          break
-        }
+
+      // ── Construction des données texte ─────────────────────────────────
+
+      const specMap = domData.specMap
+
+      const rawPower =
+        specMap['leistung'] ??
+        specMap['puissance'] ??
+        specMap['power'] ??
+        specMap['ps'] ??
+        undefined
+
+      const exteriorColor =
+        specMap['außenfarbe'] ??
+        specMap['farbe'] ??
+        specMap['couleur extérieure'] ??
+        specMap['color externo'] ??
+        undefined
+
+      const interiorColor =
+        specMap['innenausstattung'] ??
+        specMap['sellerie'] ??
+        specMap['interior color'] ??
+        undefined
+
+      const doors =
+        parseInt(specMap['türen'] ?? specMap['portes'] ?? specMap['doors'] ?? '') || undefined
+      const seats =
+        parseInt(specMap['sitze'] ?? specMap['places'] ?? specMap['seats'] ?? '') || undefined
+
+      const extractedData: As24ExtractedData = {}
+      if (jsonLdData?.description) extractedData.description = jsonLdData.description
+      if (domData.features.length > 0) extractedData.features = domData.features
+
+      const finalPower = rawPower ?? nextDataExtracted.power
+      const specifications = finalPower ? parsePower(finalPower) : undefined
+      if (specifications) extractedData.specifications = specifications
+
+      if (exteriorColor ?? nextDataExtracted.exteriorColor)
+        extractedData.exteriorColor = (exteriorColor ?? nextDataExtracted.exteriorColor)!
+      if (interiorColor ?? nextDataExtracted.interiorColor)
+        extractedData.interiorColor = (interiorColor ?? nextDataExtracted.interiorColor)!
+
+      if (doors ?? nextDataExtracted.doors) extractedData.doors = (doors ?? nextDataExtracted.doors)!
+      if (seats ?? nextDataExtracted.seats) extractedData.seats = (seats ?? nextDataExtracted.seats)!
+
+      if (domData.dealerName ?? nextDataExtracted.dealerName)
+        extractedData.dealer = (domData.dealerName ?? nextDataExtracted.dealerName)!
+      if (domData.dealerCity ?? nextDataExtracted.dealerCity)
+        extractedData.dealerCity = (domData.dealerCity ?? nextDataExtracted.dealerCity)!
+
+      if (nextDataExtracted.price && nextDataExtracted.price > 0)
+        extractedData.price = nextDataExtracted.price
+      if (nextDataExtracted.mileage != null) extractedData.mileage = nextDataExtracted.mileage
+
+      // ── ÉTAPE 5 : success ─────────────────────────────────────────────
+      return { kind: 'success', imageUrls, extractedData }
+    } catch (err) {
+      return {
+        kind: 'temporary_error',
+        code: 'parsing_error',
+        message: `Erreur d'analyse de la page : ${err instanceof Error ? err.message : String(err)}`,
       }
-
-      return { features, specMap, dealerName, dealerCity }
-    })
-
-    // ── Construction des URLs d'images finales ─────────────────────────────
-
-    let rawImageUrls: string[] = [...interceptedImages]
-
-    if (!rawImageUrls.length && jsonLdData?.images.length) {
-      rawImageUrls = jsonLdData.images
     }
-
-    if (!rawImageUrls.length) {
-      // Dernier recours : balises <img> dans le DOM
-      try {
-        await page.waitForSelector('img[src*="autoscout24"]', { timeout: 8_000 })
-      } catch {
-        /* pas d'images trouvées — on continue avec tableau vide */
-      }
-      rawImageUrls = await page.evaluate(() =>
-        [
-          ...new Set(
-            Array.from(document.querySelectorAll('img'))
-              .map(
-                (img) =>
-                  (img as HTMLImageElement).src || img.getAttribute('data-src') || '',
-              )
-              .filter(
-                (src) =>
-                  src.includes('autoscout24') &&
-                  /\.(jpg|jpeg|webp|png)/i.test(src) &&
-                  !src.includes('logo'),
-              ),
-          ),
-        ],
-      )
-    }
-
-    const imageUrls = [
-      ...new Set(
-        rawImageUrls
-          .map(normalizeAs24Url)
-          .filter((u) => u.includes('prod.pictures.autoscout24.net/listing-images/')),
-      ),
-    ]
-
-    // ── Construction des données texte ─────────────────────────────────────
-
-    const specMap = domData.specMap
-
-    // Champs de puissance (plusieurs libellés selon la langue AS24)
-    const rawPower =
-      specMap['leistung'] ??
-      specMap['puissance'] ??
-      specMap['power'] ??
-      specMap['ps'] ??
-      undefined
-
-    // Couleurs
-    const exteriorColor =
-      specMap['außenfarbe'] ??
-      specMap['farbe'] ??
-      specMap['couleur extérieure'] ??
-      specMap['color externo'] ??
-      undefined
-
-    const interiorColor =
-      specMap['innenausstattung'] ??
-      specMap['sellerie'] ??
-      specMap['interior color'] ??
-      undefined
-
-    // Portes / places
-    const doors =
-      parseInt(specMap['türen'] ?? specMap['portes'] ?? specMap['doors'] ?? '') || undefined
-    const seats =
-      parseInt(specMap['sitze'] ?? specMap['places'] ?? specMap['seats'] ?? '') || undefined
-
-    const extractedData: As24EnrichedData['extractedData'] = {}
-    if (jsonLdData?.description) extractedData.description = jsonLdData.description
-    if (domData.features.length > 0) extractedData.features = domData.features
-
-    // Puissance : DOM prioritaire, fallback __NEXT_DATA__
-    const finalPower = rawPower ?? nextDataExtracted.power
-    const specifications = finalPower ? parsePower(finalPower) : undefined
-    if (specifications) extractedData.specifications = specifications
-
-    // Couleurs : DOM prioritaire, fallback __NEXT_DATA__
-    if (exteriorColor ?? nextDataExtracted.exteriorColor)
-      extractedData.exteriorColor = (exteriorColor ?? nextDataExtracted.exteriorColor)!
-    if (interiorColor ?? nextDataExtracted.interiorColor)
-      extractedData.interiorColor = (interiorColor ?? nextDataExtracted.interiorColor)!
-
-    // Portes / places
-    if (doors ?? nextDataExtracted.doors) extractedData.doors = (doors ?? nextDataExtracted.doors)!
-    if (seats ?? nextDataExtracted.seats) extractedData.seats = (seats ?? nextDataExtracted.seats)!
-
-    // Dealer : DOM prioritaire, fallback __NEXT_DATA__
-    if (domData.dealerName ?? nextDataExtracted.dealerName)
-      extractedData.dealer = (domData.dealerName ?? nextDataExtracted.dealerName)!
-    if (domData.dealerCity ?? nextDataExtracted.dealerCity)
-      extractedData.dealerCity = (domData.dealerCity ?? nextDataExtracted.dealerCity)!
-
-    // Prix et km depuis __NEXT_DATA__ (non disponibles dans DOM ou JSON-LD)
-    if (nextDataExtracted.price && nextDataExtracted.price > 0)
-      extractedData.price = nextDataExtracted.price
-    if (nextDataExtracted.mileage != null)
-      extractedData.mileage = nextDataExtracted.mileage
-
-    return { imageUrls, extractedData }
   } finally {
     await browser?.close()
   }

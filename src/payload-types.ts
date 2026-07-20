@@ -930,7 +930,7 @@ export interface Vehicle {
       }[]
     | null;
   /**
-   * ID externe du véhicule (ImporteMoi, AutoScout24, etc.)
+   * ID externe du véhicule (legacy — non utilisé dans le pipeline actuel)
    */
   externalId?: string | null;
   /**
@@ -946,7 +946,7 @@ export interface Vehicle {
    */
   originalListingUrl?: string | null;
   /**
-   * Plateforme source (importemoi.fr, autoscout24.de, etc.)
+   * Plateforme source (ex: autoscout24.de)
    */
   sourcePlatform?: string | null;
   /**
@@ -971,6 +971,26 @@ export interface Vehicle {
    */
   lastScrapedAt?: string | null;
   /**
+   * Statut du dernier cycle d'enrichissement (2e passe AS24)
+   */
+  enrichmentStatus?: ('pending' | 'in_progress' | 'completed' | 'failed') | null;
+  /**
+   * Nombre de tentatives d'enrichissement (total)
+   */
+  enrichmentAttempts?: number | null;
+  /**
+   * Dernière erreur d'enrichissement
+   */
+  enrichmentLastError?: string | null;
+  /**
+   * Début du dernier cycle d'enrichissement
+   */
+  enrichmentStartedAt?: string | null;
+  /**
+   * Fin du dernier cycle d'enrichissement (succès)
+   */
+  enrichmentCompletedAt?: string | null;
+  /**
    * Nombre d'échecs consécutifs de vérification AS24 (timeout / erreur réseau)
    */
   syncErrorCount?: number | null;
@@ -979,7 +999,15 @@ export interface Vehicle {
    */
   syncErrorSince?: string | null;
   /**
-   * URLs des images du véhicule (générées depuis ImporteMoi)
+   * Date de détection de la suppression de l'annonce source (HTTP 404 ou 410)
+   */
+  sourceInactiveAt?: string | null;
+  /**
+   * Code HTTP ayant déclenché l'inactivation du véhicule
+   */
+  sourceInactiveReason?: ('source_404' | 'source_410') | null;
+  /**
+   * URLs des images brutes du véhicule
    */
   imageUrls?:
     | {
@@ -1653,8 +1681,15 @@ export interface VehiclesSelect<T extends boolean = true> {
   canonicalSourceUrl?: T;
   publishedDate?: T;
   lastScrapedAt?: T;
+  enrichmentStatus?: T;
+  enrichmentAttempts?: T;
+  enrichmentLastError?: T;
+  enrichmentStartedAt?: T;
+  enrichmentCompletedAt?: T;
   syncErrorCount?: T;
   syncErrorSince?: T;
+  sourceInactiveAt?: T;
+  sourceInactiveReason?: T;
   imageUrls?:
     | T
     | {

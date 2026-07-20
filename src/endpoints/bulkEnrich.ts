@@ -11,11 +11,20 @@
  * État persistant par véhicule (C5) :
  *   enrichmentStatus : pending | in_progress | completed | failed
  *   enrichmentAttempts, enrichmentLastError, enrichmentStartedAt, enrichmentCompletedAt
+ *
+ * Détection suppression d'annonce (C4) :
+ *   listing_removed (404/410) → status=inactive, sourceInactiveAt, sourceInactiveReason
+ *   temporary_error           → enrichmentStatus=failed, statut métier inchangé
  */
 
 import type { PayloadHandler, Where } from 'payload'
 import type { Vehicle } from '@/payload-types'
 import { enrichAs24Listing } from '@/lib/enrichAs24Listing'
+import {
+  buildEnrichmentSuccessPatch,
+  buildListingRemovedPatch,
+  buildTemporaryErrorPatch,
+} from '@/lib/buildEnrichmentPatch'
 
 const ALLOWED_HOST =
   /^https?:\/\/(www\.)?autoscout24\.(de|com|fr|it|es|nl|be|at|ch|lu|pl)/
@@ -179,11 +188,8 @@ export const bulkEnrichHandler: PayloadHandler = async (req): Promise<Response> 
         // ── 3. Filtrer, trier, limiter ───────────────────────────────────────
         const toEnrich = (vehicles as Vehicle[])
           .filter((v) => {
-            // URL requise
             if (!resolveListingUrl(v)) return false
-            // Score
             if (calcScore(v) >= minScore) return false
-            // Mode resume : skip completed et in_progress
             if (mode === 'resume') {
               const s = (v as unknown as Record<string, unknown>).enrichmentStatus
               if (s === 'completed' || s === 'in_progress') return false
@@ -196,7 +202,7 @@ export const bulkEnrichHandler: PayloadHandler = async (req): Promise<Response> 
 
         send({ type: 'log', message: `${toEnrich.length} véhicules à enrichir (score < ${minScore}%)` })
 
-        const stats = { total: toEnrich.length, enriched: 0, skipped: 0, errors: 0 }
+        const stats = { total: toEnrich.length, enriched: 0, skipped: 0, errors: 0, removed: 0 }
 
         // ── 4. Traitement par véhicule ───────────────────────────────────────
         for (const { v: vehicle, score: scoreBefore } of toEnrich) {
@@ -251,33 +257,59 @@ export const bulkEnrichHandler: PayloadHandler = async (req): Promise<Response> 
               status: 'error',
               message: 'URL non autorisée',
             })
+            await sleep(INTER_VEHICLE_DELAY)
             continue
           }
 
           try {
-            const { imageUrls, extractedData } = await enrichAs24Listing(listingUrl)
+            const result = await enrichAs24Listing(listingUrl)
 
-            const patch: Record<string, unknown> = {}
-            const currentImageCount = vehicle.imageUrls?.length ?? 0
-            if (imageUrls.length > currentImageCount) patch.imageUrls = imageUrls.map((url) => ({ url }))
-            if (extractedData.description && !vehicle.description) patch.description = extractedData.description
-            if (extractedData.features?.length && !vehicle.features?.length) patch.features = extractedData.features.map((f) => ({ feature: f }))
-            if (extractedData.specifications?.power && !(vehicle.specifications as Record<string, unknown>)?.power) {
-              patch.specifications = { ...(vehicle.specifications ?? {}), ...extractedData.specifications }
+            // ── listing_removed ────────────────────────────────────────────
+            if (result.kind === 'listing_removed') {
+              const removedPatch = buildListingRemovedPatch(result)
+              await payload.update({
+                collection: 'vehicles',
+                id: vehicle.id,
+                data: removedPatch,
+              })
+              stats.removed++
+              send({
+                type: 'vehicle',
+                title: vehicle.title,
+                scoreBefore,
+                scoreAfter: 0,
+                status: 'removed',
+                message: `Annonce supprimée (HTTP ${result.httpStatus})`,
+              })
+              await sleep(INTER_VEHICLE_DELAY)
+              continue
             }
-            if (extractedData.exteriorColor && !vehicle.exteriorColor) patch.exteriorColor = extractedData.exteriorColor
-            if (extractedData.interiorColor && !vehicle.interiorColor) patch.interiorColor = extractedData.interiorColor
-            if (extractedData.doors && !vehicle.doors) patch.doors = extractedData.doors
-            if (extractedData.seats && !vehicle.seats) patch.seats = extractedData.seats
-            if (extractedData.dealer && !vehicle.dealer) patch.dealer = extractedData.dealer
-            if (extractedData.dealerCity && !vehicle.dealerCity) patch.dealerCity = extractedData.dealerCity
-            if (extractedData.price && extractedData.price > 0 && !(vehicle.price && vehicle.price > 0)) patch.price = extractedData.price
-            if (extractedData.mileage != null && !(vehicle.mileage != null && vehicle.mileage > 0)) patch.mileage = extractedData.mileage
-            patch.lastScrapedAt = new Date().toISOString()
 
-            const appliedFields = Object.keys(patch).filter((k) => k !== 'lastScrapedAt')
+            // ── temporary_error ────────────────────────────────────────────
+            if (result.kind === 'temporary_error') {
+              const errorPatch = buildTemporaryErrorPatch(result)
+              await payload.update({
+                collection: 'vehicles',
+                id: vehicle.id,
+                data: errorPatch,
+              }).catch(() => null)
+              stats.errors++
+              send({
+                type: 'vehicle',
+                title: vehicle.title,
+                scoreBefore,
+                scoreAfter: scoreBefore,
+                status: 'error',
+                message: `${result.code}: ${result.message}`,
+              })
+              await sleep(INTER_VEHICLE_DELAY)
+              continue
+            }
 
-            if (appliedFields.length === 0) {
+            // ── success ────────────────────────────────────────────────────
+            const { patch, appliedFields, noop } = buildEnrichmentSuccessPatch(result, vehicle)
+
+            if (noop) {
               await payload.update({
                 collection: 'vehicles',
                 id: vehicle.id,
@@ -299,10 +331,21 @@ export const bulkEnrichHandler: PayloadHandler = async (req): Promise<Response> 
               patch.enrichmentStatus = 'completed'
               patch.enrichmentCompletedAt = new Date().toISOString()
               await payload.update({ collection: 'vehicles', id: vehicle.id, data: patch })
-              const updated = await payload.findByID({ collection: 'vehicles', id: vehicle.id, depth: 0 }) as Vehicle
+              const updated = await payload.findByID({
+                collection: 'vehicles',
+                id: vehicle.id,
+                depth: 0,
+              }) as Vehicle
               const scoreAfter = calcScore(updated)
               stats.enriched++
-              send({ type: 'vehicle', title: vehicle.title, scoreBefore, scoreAfter, status: 'enriched' })
+              send({
+                type: 'vehicle',
+                title: vehicle.title,
+                scoreBefore,
+                scoreAfter,
+                status: 'enriched',
+                appliedFields,
+              })
             }
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : 'Erreur inconnue'
@@ -332,7 +375,7 @@ export const bulkEnrichHandler: PayloadHandler = async (req): Promise<Response> 
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'Erreur fatale'
         controller.enqueue(encoder.encode('data: ' + JSON.stringify({ type: 'log', message: `Erreur fatale: ${msg}` }) + '\n\n'))
-        controller.enqueue(encoder.encode('data: ' + JSON.stringify({ type: 'done', stats: { total: 0, enriched: 0, skipped: 0, errors: 1 } }) + '\n\n'))
+        controller.enqueue(encoder.encode('data: ' + JSON.stringify({ type: 'done', stats: { total: 0, enriched: 0, skipped: 0, errors: 1, removed: 0 } }) + '\n\n'))
       } finally {
         controller.close()
       }

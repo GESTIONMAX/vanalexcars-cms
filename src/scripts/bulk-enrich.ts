@@ -5,10 +5,10 @@
  * Pour chaque véhicule actif avec `originalListingUrl`, visite la fiche
  * individuelle AS24 via Playwright et récupère images + données texte.
  *
- * Règles de mise à jour :
- *   - Images    : enrichies seulement si le compte actuel est inférieur à ce qu'on trouve
- *   - Texte     : ajouté seulement si le champ est vide en base (pas d'écrasement)
- *   - Statut    : jamais modifié par ce script
+ * Résultats possibles par véhicule (C4) :
+ *   listing_removed → status=inactive, sourceInactiveAt, sourceInactiveReason, enrichmentStatus=completed
+ *   temporary_error → enrichmentStatus=failed, statut métier inchangé
+ *   success         → patch partiel sans écrasement des champs existants
  *
  * Flags :
  *   --dry-run          Aucune écriture en base, affiche seulement ce qui serait fait
@@ -24,6 +24,11 @@
 import { getPayload } from 'payload'
 import config from '../payload.config.js'
 import { enrichAs24Listing } from '../lib/enrichAs24Listing.js'
+import {
+  buildEnrichmentSuccessPatch,
+  buildListingRemovedPatch,
+  buildTemporaryErrorPatch,
+} from '../lib/buildEnrichmentPatch.js'
 
 // ── Paramètres CLI ────────────────────────────────────────────────────────────
 
@@ -81,6 +86,7 @@ async function main() {
     enriched: 0,
     skipped: 0,
     errors: 0,
+    removed: 0,
     totalNewImages: 0,
   }
 
@@ -93,64 +99,49 @@ async function main() {
     log(`  Images   : ${vehicle.imageUrls?.length ?? 0} actuellement`)
 
     try {
-      const { imageUrls, extractedData } = await enrichAs24Listing(
-        vehicle.originalListingUrl as string,
-      )
+      const result = await enrichAs24Listing(vehicle.originalListingUrl as string)
 
-      log(`  Trouvées : ${imageUrls.length} images`)
-
-      if (imageUrls.length === 0) {
-        log(`  ⚠️  Aucune image trouvée — fiche peut-être bloquée ou expirée`)
-        stats.skipped++
+      // ── listing_removed : annonce définitivement supprimée ────────────────
+      if (result.kind === 'listing_removed') {
+        const removedPatch = buildListingRemovedPatch(result)
+        if (!DRY_RUN) {
+          await payload.update({ collection: 'vehicles', id: vehicle.id, data: removedPatch })
+        }
+        log(`  🗑️  ${DRY_RUN ? '[DRY] ' : ''}Annonce supprimée (HTTP ${result.httpStatus}) → véhicule inactivé`)
+        stats.removed++
         if (i < toEnrich.length - 1) await sleep(DELAY_MS)
         continue
       }
 
-      // Construire le patch (règle : ne jamais écraser)
-      const patch: Record<string, unknown> = {}
+      // ── temporary_error : erreur transitoire ──────────────────────────────
+      if (result.kind === 'temporary_error') {
+        const errorPatch = buildTemporaryErrorPatch(result)
+        if (!DRY_RUN) {
+          await payload.update({ collection: 'vehicles', id: vehicle.id, data: errorPatch })
+        }
+        log(`  ⚠️  ${DRY_RUN ? '[DRY] ' : ''}Erreur temporaire [${result.code}] : ${result.message}`)
+        stats.errors++
+        if (i < toEnrich.length - 1) await sleep(DELAY_MS)
+        continue
+      }
+
+      // ── success ────────────────────────────────────────────────────────────
+      log(`  Trouvées : ${result.imageUrls.length} images`)
+
+      const { patch, appliedFields, noop } = buildEnrichmentSuccessPatch(result, vehicle as Parameters<typeof buildEnrichmentSuccessPatch>[1])
       const currentImageCount = vehicle.imageUrls?.length ?? 0
+      const newImages = result.imageUrls.length - currentImageCount
 
-      if (imageUrls.length > currentImageCount) {
-        patch.imageUrls = imageUrls.map((url) => ({ url }))
-      }
-
-      if (extractedData.description && !vehicle.description) {
-        patch.description = extractedData.description
-      }
-      if (extractedData.features?.length && !(vehicle.features?.length)) {
-        patch.features = extractedData.features.map((f: string) => ({ feature: f }))
-      }
-      if (extractedData.specifications?.power && !vehicle.specifications?.power) {
-        patch.specifications = { ...(vehicle.specifications ?? {}), ...extractedData.specifications }
-      }
-      if (extractedData.exteriorColor && !vehicle.exteriorColor) {
-        patch.exteriorColor = extractedData.exteriorColor
-      }
-      if (extractedData.interiorColor && !vehicle.interiorColor) {
-        patch.interiorColor = extractedData.interiorColor
-      }
-      if (extractedData.doors && !vehicle.doors) patch.doors = extractedData.doors
-      if (extractedData.seats && !vehicle.seats) patch.seats = extractedData.seats
-      if (extractedData.dealer && !vehicle.dealer) {
-        patch.dealer = extractedData.dealer
-      }
-      if (extractedData.dealerCity && !vehicle.dealerCity) {
-        patch.dealerCity = extractedData.dealerCity
-      }
-
-      patch.lastScrapedAt = new Date().toISOString()
-
-      const appliedFields = Object.keys(patch).filter((k) => k !== 'lastScrapedAt')
-      const newImages = imageUrls.length - currentImageCount
-
-      if (appliedFields.length === 0) {
+      if (noop) {
         log(`  ✅ Rien à enrichir (déjà complet)`)
         stats.skipped++
       } else {
         if (!DRY_RUN) {
+          patch.enrichmentStatus = 'completed'
+          patch.enrichmentCompletedAt = new Date().toISOString()
           await payload.update({ collection: 'vehicles', id: vehicle.id, data: patch })
         }
-        log(`  ✅ ${DRY_RUN ? '[DRY] ' : ''}Enrichi : +${newImages} images | ${appliedFields.join(', ')}`)
+        log(`  ✅ ${DRY_RUN ? '[DRY] ' : ''}Enrichi : +${Math.max(0, newImages)} images | ${appliedFields.join(', ')}`)
         stats.enriched++
         stats.totalNewImages += Math.max(0, newImages)
       }
@@ -165,9 +156,10 @@ async function main() {
   }
 
   log('─────────────────────────────────────')
-  log(`✅ Enrichis   : ${stats.enriched}`)
-  log(`⏭️  Ignorés    : ${stats.skipped}`)
-  log(`❌ Erreurs    : ${stats.errors}`)
+  log(`✅ Enrichis      : ${stats.enriched}`)
+  log(`🗑️  Inactivés     : ${stats.removed}`)
+  log(`⏭️  Ignorés       : ${stats.skipped}`)
+  log(`❌ Erreurs       : ${stats.errors}`)
   log(`📸 Nouvelles images : ${stats.totalNewImages}`)
   log(`Mode : ${DRY_RUN ? "DRY-RUN — rien n'a été modifié" : 'LIVE — base de données mise à jour'}`)
 
