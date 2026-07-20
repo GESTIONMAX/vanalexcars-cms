@@ -125,7 +125,7 @@ export const enrichVehicleHandler: PayloadHandler = async (req): Promise<Respons
     if (extractedData.seats && !vehicle.seats) patch.seats = extractedData.seats
 
     // Concessionnaire
-    if (extractedData.dealer && (!vehicle.dealer || /importemoi/i.test(vehicle.dealer))) {
+    if (extractedData.dealer && !vehicle.dealer) {
       patch.dealer = extractedData.dealer
     }
     if (extractedData.dealerCity && !vehicle.dealerCity) {

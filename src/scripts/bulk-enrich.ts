@@ -131,7 +131,7 @@ async function main() {
       }
       if (extractedData.doors && !vehicle.doors) patch.doors = extractedData.doors
       if (extractedData.seats && !vehicle.seats) patch.seats = extractedData.seats
-      if (extractedData.dealer && (!vehicle.dealer || /importemoi/i.test(vehicle.dealer as string))) {
+      if (extractedData.dealer && !vehicle.dealer) {
         patch.dealer = extractedData.dealer
       }
       if (extractedData.dealerCity && !vehicle.dealerCity) {

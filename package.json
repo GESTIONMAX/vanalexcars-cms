@@ -22,6 +22,9 @@
     "bulk-enrich:dry": "node --env-file=.env --no-deprecation --import tsx/esm src/scripts/bulk-enrich.ts --dry-run",
     "backfill:source-keys": "node --env-file=.env --no-deprecation --import tsx/esm src/scripts/backfill-source-keys.ts",
     "backfill:source-keys:apply": "node --env-file=.env --no-deprecation --import tsx/esm src/scripts/backfill-source-keys.ts --apply",
+    "migrate:importemoi-dealer": "node --env-file=.env --no-deprecation --import tsx/esm src/scripts/migrate-importemoi-dealer.ts",
+    "migrate:importemoi-dealer:audit": "node --env-file=.env --no-deprecation --import tsx/esm src/scripts/migrate-importemoi-dealer.ts --audit",
+    "migrate:importemoi-dealer:apply": "node --env-file=.env --no-deprecation --import tsx/esm src/scripts/migrate-importemoi-dealer.ts --apply",
     "test": "vitest run"
   },
   "dependencies": {

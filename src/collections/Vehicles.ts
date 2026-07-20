@@ -320,7 +320,7 @@ export const Vehicles: CollectionConfig = {
       unique: true,
       index: true,
       admin: {
-        description: 'ID externe du véhicule (ImporteMoi, AutoScout24, etc.)',
+        description: 'ID externe du véhicule (legacy — non utilisé dans le pipeline actuel)',
         position: 'sidebar',
       },
     },
@@ -354,7 +354,7 @@ export const Vehicles: CollectionConfig = {
       name: 'sourcePlatform',
       type: 'text',
       admin: {
-        description: 'Plateforme source (importemoi.fr, autoscout24.de, etc.)',
+        description: 'Plateforme source (ex: autoscout24.de)',
         position: 'sidebar',
       },
     },
@@ -494,7 +494,7 @@ export const Vehicles: CollectionConfig = {
       type: 'array',
       label: 'URLs des Images',
       admin: {
-        description: 'URLs des images du véhicule (générées depuis ImporteMoi)',
+        description: 'URLs des images brutes du véhicule',
       },
       fields: [
         {
@@ -566,7 +566,7 @@ export const Vehicles: CollectionConfig = {
             doc.processedImages.social,
           ].filter(Boolean).map(fixUrl);
         } else if (doc.imageUrls?.length > 0) {
-          // Fallback sur les images brutes ImporteMoi
+          // Fallback sur les images brutes
           doc.mainImage = doc.imageUrls[0].url;
           doc.galleryImages = doc.imageUrls.map((img: any) => img.url);
         } else {

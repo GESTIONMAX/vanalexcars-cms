@@ -10,7 +10,7 @@
 export type DataQuality =
   | 'verified'     // Source primaire fiable (__NEXT_DATA__, JSON-LD structuré)
   | 'inferred'     // Heuristique DOM, regex, calcul
-  | 'placeholder'  // Valeur de remplissage reconnue (ImporteMoi, N/A, À renseigner…)
+  | 'placeholder'  // Valeur de remplissage reconnue (N/A, À renseigner, inconnu…)
   | 'missing'      // Champ absent ou vide dans la source
   | 'manual'       // Saisie manuellement via l'admin CMS (protégé contre l'écrasement)
 
@@ -31,15 +31,12 @@ export type DataSource =
 // ─── Raisons de skip ─────────────────────────────────────────────────────────
 
 export type SkipReason =
-  | 'already_set'               // Valeur existante protégée (qualité ≥ entrante ou manual)
-  | 'source_empty'              // Source n'a pas fourni de valeur
-  | 'quality_too_low'           // Qualité entrante inférieure à l'existant
-  | 'validation_failed'         // Valeur hors plage ou format invalide
-  | 'placeholder'               // Valeur de remplissage générique à ne pas persister
-  | 'private_seller'            // Annonce de particulier — ne pas écrire comme dealer
-  | 'legacy_provenance_artifact' // @legacy — anomalie de modélisation historique (ex: ImporteMoi)
-                                 // Ne représente pas un dealer ni un particulier.
-                                 // À éliminer par migration, pas par règle métier permanente.
+  | 'already_set'        // Valeur existante protégée (qualité ≥ entrante ou manual)
+  | 'source_empty'       // Source n'a pas fourni de valeur
+  | 'quality_too_low'    // Qualité entrante inférieure à l'existant
+  | 'validation_failed'  // Valeur hors plage ou format invalide
+  | 'placeholder'        // Valeur de remplissage générique à ne pas persister
+  | 'private_seller'     // Annonce de particulier — ne pas écrire comme dealer
 
 // ─── Éligibilité vendeur ──────────────────────────────────────────────────────
 

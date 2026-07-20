@@ -56,20 +56,14 @@ describe('normalizeVehicle — éligibilité vendeur', () => {
     expect(result.eligibility).not.toBe('private_seller_not_eligible')
   })
 
-  it('"ImporteMoi" → seller_unknown — ni concessionnaire ni particulier', () => {
+  it('dealer absent → seller_unknown, pas de patch dealer', () => {
+    // Cas nominal : dealer non fourni par la source
     const result = normalizeVehicle(
-      { source: 'autoscout24.import', dealer: 'ImporteMoi', price: 30000 },
+      { source: 'autoscout24.import', price: 30000 },
       emptyExisting,
     )
-    // ImporteMoi = anomalie legacy de provenance, pas un dealer, pas un particulier
     expect(result.eligibility).toBe('seller_unknown')
-    expect(result.eligibility).not.toBe('private_seller_not_eligible')
-    expect(result.eligibility).not.toBe('eligible_professional_seller')
-    // Le nom ImporteMoi ne doit pas apparaître dans le patch
     expect(result.patch).not.toHaveProperty('dealer')
-    // La décision dealer doit porter le skipReason legacy
-    const dealerDecision = result.decisions.find((d) => d.field === 'dealer')
-    expect(dealerDecision?.incoming.skipReason).toBe('legacy_provenance_artifact')
   })
 })
 
@@ -173,11 +167,11 @@ describe('normalizeVehicle — orchestration', () => {
     expect(result.patch).not.toHaveProperty('mileage')
   })
 
-  it('dealer ImporteMoi en base (anomalie legacy) + vrai dealer AS24 → remplacement autorisé', () => {
-    // ImporteMoi n'est pas un "vrai dealer protégé" : le vrai dealer peut le remplacer
+  it('dealer placeholder en base + vrai dealer AS24 → remplacement autorisé', () => {
+    // Un dealer placeholder existant (N/A, vide) n'est pas protégé
     const result = normalizeVehicle(
       { source: 'autoscout24.dom', dealer: 'Mercedes Benz Hamburg', dealerCity: 'Hamburg' },
-      { dealer: 'ImporteMoi', dealerCity: null },
+      { dealer: null, dealerCity: null },
     )
     expect(result.patch).toHaveProperty('dealer', 'Mercedes Benz Hamburg')
     expect(result.eligibility).toBe('eligible_professional_seller')

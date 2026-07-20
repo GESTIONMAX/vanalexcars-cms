@@ -48,7 +48,7 @@ function calcScore(v: Vehicle): number {
   if (v.fuel) earned += weights.fuel
   if (v.transmission) earned += weights.transmission
   if (v.imageUrls && v.imageUrls.length > 0) earned += weights.images
-  if (v.dealer && !/importemoi/i.test(v.dealer)) earned += weights.dealer
+  if (v.dealer) earned += weights.dealer
   if (specs?.power) earned += weights.power
   if (v.exteriorColor) earned += weights.exteriorColor
   if (v.doors) earned += weights.doors
@@ -269,7 +269,7 @@ export const bulkEnrichHandler: PayloadHandler = async (req): Promise<Response> 
             if (extractedData.interiorColor && !vehicle.interiorColor) patch.interiorColor = extractedData.interiorColor
             if (extractedData.doors && !vehicle.doors) patch.doors = extractedData.doors
             if (extractedData.seats && !vehicle.seats) patch.seats = extractedData.seats
-            if (extractedData.dealer && (!vehicle.dealer || /importemoi/i.test(vehicle.dealer))) patch.dealer = extractedData.dealer
+            if (extractedData.dealer && !vehicle.dealer) patch.dealer = extractedData.dealer
             if (extractedData.dealerCity && !vehicle.dealerCity) patch.dealerCity = extractedData.dealerCity
             if (extractedData.price && extractedData.price > 0 && !(vehicle.price && vehicle.price > 0)) patch.price = extractedData.price
             if (extractedData.mileage != null && !(vehicle.mileage != null && vehicle.mileage > 0)) patch.mileage = extractedData.mileage

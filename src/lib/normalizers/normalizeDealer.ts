@@ -2,10 +2,10 @@
  * normalizeDealer.ts
  *
  * Évalue si le nom de concessionnaire entrant est fiable,
- * détecte les particuliers et les anomalies héritées,
+ * détecte les vendeurs particuliers et les valeurs placeholder,
  * décide si la valeur peut remplacer l'existante.
  *
- * ─── TROIS LISTES DISTINCTES — ne pas confondre ───────────────────────────────
+ * ─── DEUX LISTES DISTINCTES — ne pas confondre ────────────────────────────────
  *
  * 1. PRIVATE_SELLER_PATTERNS
  *    Indications explicites de vente entre particuliers ("Privat", "Particulier"…).
@@ -15,17 +15,13 @@
  *    Valeurs de remplissage génériques vides de sens ("N/A", "À renseigner"…).
  *    → skipReason: 'placeholder' — ne pas persister, sans jugement sur le vendeur.
  *
- * 3. LEGACY_PROVENANCE_ARTIFACTS  (@legacy — à supprimer après migration)
- *    Noms qui ne représentent ni un dealer ni un particulier, mais une ancienne
- *    source de données dont les entrées ont été modélisées incorrectement dans
- *    le champ `dealer`. ImporteMoi en est l'exemple type.
- *    → skipReason: 'legacy_provenance_artifact'
- *    → eligibility: 'seller_unknown' (on ne sait pas qui est le vrai vendeur)
- *    → NE JAMAIS écrire ces valeurs en base
- *    → NE PAS traiter comme un concessionnaire ni comme un particulier
- *    → Prévoir une migration : dealer = null, provenance dans sourcePlatform
+ * Note historique :
+ *    ImporteMoi était une ancienne source scrapée dont certains véhicules
+ *    avaient dealer = "ImporteMoi". Cette anomalie de modélisation a été
+ *    corrigée par la migration migrate-importemoi-dealer.ts (2026-07-20).
+ *    Aucun traitement spécifique n'est nécessaire ici.
  *
- * @see docs/architecture-normalisation.md — §ImporteMoi legacy
+ * @see docs/architecture-normalisation.md
  */
 
 import type {
@@ -50,7 +46,7 @@ const PRIVATE_SELLER_PATTERNS: RegExp[] = [
 ]
 
 // ─── 2. Placeholders génériques ──────────────────────────────────────────────
-// Valeurs vides de sens, pas d'information sur le vendeur.
+// Valeurs vides de sens — pas d'information sur le vendeur.
 
 const DEALER_PLACEHOLDERS: RegExp[] = [
   /^n\/a$/i,
@@ -60,20 +56,6 @@ const DEALER_PLACEHOLDERS: RegExp[] = [
   /^unknown$/i,
   /^-+$/,
   /^\.+$/,
-]
-
-// ─── 3. Artefacts de provenance legacy  @legacy ──────────────────────────────
-// Noms issus d'une erreur de modélisation historique. Ils ne désignent pas un
-// vendeur — ils désignent une ancienne source de données (scraping de site tiers).
-//
-// IMPORTANT : cette liste est temporaire. Elle doit disparaître une fois la
-// migration réalisée (dealer = null pour les véhicules affectés).
-//
-// Après migration : supprimer LEGACY_PROVENANCE_ARTIFACTS et toute référence
-// à 'legacy_provenance_artifact' dans le code et les tests.
-
-const LEGACY_PROVENANCE_ARTIFACTS: RegExp[] = [
-  /importemoi/i,   // ImporteMoi : ancienne source scrapée, jamais un concessionnaire
 ]
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -98,13 +80,9 @@ function isPlaceholder(name: string): boolean {
   return DEALER_PLACEHOLDERS.some((p) => p.test(name))
 }
 
-function isLegacyProvenance(name: string): boolean {
-  return LEGACY_PROVENANCE_ARTIFACTS.some((p) => p.test(name))
-}
-
 /**
  * Retourne true si le nom de dealer existant est "protégé" (ne pas écraser).
- * N'est PAS protégé : placeholder générique, artefact legacy, nom de particulier.
+ * N'est PAS protégé : placeholder générique, valeur vide, nom de particulier.
  */
 function isExistingProtected(
   existing: ExistingDealerData | undefined,
@@ -114,7 +92,7 @@ function isExistingProtected(
   if (existing.quality === 'manual') return true
   const name = existing.name?.trim() ?? ''
   if (name === '') return false
-  if (isPrivateSeller(name) || isPlaceholder(name) || isLegacyProvenance(name)) return false
+  if (isPrivateSeller(name) || isPlaceholder(name)) return false
   // Vrai dealer existant — protégé si la confiance entrante est insuffisante
   return confidence < 0.85
 }
@@ -135,12 +113,6 @@ export interface NormalizeDealerResult {
   city: NormalizedField<string>
   /** Éligibilité à l'import basée sur le nom de dealer entrant */
   eligibility: VehicleEligibilityReason
-  /**
-   * @legacy — true si le dealer entrant est un artefact de provenance historique.
-   * Utilisé par le futur script de migration.
-   * À supprimer après migration.
-   */
-  isLegacyProvenance: boolean
 }
 
 // ─── Fonction principale ──────────────────────────────────────────────────────
@@ -155,10 +127,9 @@ export function normalizeDealer(
 
   // ── Classifier le nom entrant ─────────────────────────────────────────────
   const nameEmpty = rawName === ''
-  const nameIsLegacy = !nameEmpty && isLegacyProvenance(rawName)
-  const nameIsPrivate = !nameEmpty && !nameIsLegacy && isPrivateSeller(rawName)
-  const nameIsPlaceholder = !nameEmpty && !nameIsLegacy && !nameIsPrivate && isPlaceholder(rawName)
-  const nameIsReal = !nameEmpty && !nameIsLegacy && !nameIsPrivate && !nameIsPlaceholder
+  const nameIsPrivate = !nameEmpty && isPrivateSeller(rawName)
+  const nameIsPlaceholder = !nameEmpty && !nameIsPrivate && isPlaceholder(rawName)
+  const nameIsReal = !nameEmpty && !nameIsPrivate && !nameIsPlaceholder
 
   // ── Éligibilité ───────────────────────────────────────────────────────────
   let eligibility: VehicleEligibilityReason
@@ -167,7 +138,6 @@ export function normalizeDealer(
   } else if (nameIsReal) {
     eligibility = 'eligible_professional_seller'
   } else {
-    // empty, placeholder, ou legacy → identité du vendeur inconnue
     eligibility = 'seller_unknown'
   }
 
@@ -179,14 +149,7 @@ export function normalizeDealer(
       value: null, quality: 'missing', source: incoming.source,
       confidence: 0, skipReason: 'source_empty', raw: incoming.name,
     }
-  } else if (nameIsLegacy) {
-    // Artefact de provenance : ne pas persister, ne pas confondre avec un dealer
-    name = {
-      value: null, quality: 'placeholder', source: incoming.source,
-      confidence: conf, skipReason: 'legacy_provenance_artifact', raw: rawName,
-    }
   } else if (nameIsPrivate) {
-    // Ne pas écrire "Particulier" / "Privat" comme dealer
     name = {
       value: null, quality: 'placeholder', source: incoming.source,
       confidence: conf, skipReason: 'private_seller', raw: rawName,
@@ -237,5 +200,5 @@ export function normalizeDealer(
     city = { value: rawCity, quality, source: incoming.source, confidence: conf, raw: rawCity }
   }
 
-  return { name, city, eligibility, isLegacyProvenance: nameIsLegacy }
+  return { name, city, eligibility }
 }
