@@ -177,10 +177,10 @@ function normalizeDealer(
 }
 ```
 
-**Deux listes distinctes — ne pas confondre :**
+**Trois listes distinctes — ne pas confondre :**
 
 ```typescript
-// Annonces de particuliers → inéligibles à l'import (rejet explicite)
+// 1. Annonces de particuliers → inéligibles à l'import (rejet explicite)
 const PRIVATE_SELLER_PATTERNS = [
   /^particulier$/i,
   /^privat(verkauf)?$/i,   // allemand
@@ -190,30 +190,62 @@ const PRIVATE_SELLER_PATTERNS = [
   /^privatperson$/i,
 ]
 
-// Placeholders hérités d'intermédiaires → qualité 'placeholder', pas de rejet
-// (l'origine réelle — pro ou particulier — n'est pas connue)
+// 2. Placeholders génériques → vendeur inconnu, ne pas persister
 const DEALER_PLACEHOLDERS = [
-  /importemoi/i,
   /^n\/a$/i,
   /^à renseigner$/i,
   /^inconnu$/i,
   /^unknown$/i,
   /^-+$/,
 ]
+
+// 3. @legacy — Artefacts de provenance historique (à supprimer après migration)
+// Ne désignent ni un dealer ni un particulier — désignent une ancienne source scrapée.
+const LEGACY_PROVENANCE_ARTIFACTS = [
+  /importemoi/i,   // Erreur de modélisation : scraping d'un site concurrent
+]
 ```
 
 **Règles internes :**
 
-| Condition | Qualité | Eligibilité | Action |
-|-----------|---------|-------------|--------|
-| `incoming.name` vide | `missing` | `seller_unknown` | `source_empty` |
-| `incoming.name` ∈ PRIVATE_SELLER_PATTERNS | `placeholder` | `private_seller_not_eligible` | `private_seller` — ne pas écrire |
-| `incoming.name` ∈ DEALER_PLACEHOLDERS | `placeholder` | `seller_unknown` | `placeholder` — ne pas écrire |
-| `existing.quality === 'manual'` | — | `eligible_professional_seller` | `already_set` |
-| Existing protégé (non-placeholder, non-vide) + incoming inféré | — | — | `quality_too_low` |
-| Sinon | `verified` ou `inferred` | `eligible_professional_seller` | écriture |
+| Condition | Qualité | Eligibilité | SkipReason | Action |
+|-----------|---------|-------------|------------|--------|
+| Nom vide | `missing` | `seller_unknown` | `source_empty` | ne pas écrire |
+| ∈ LEGACY_PROVENANCE_ARTIFACTS | `placeholder` | `seller_unknown` | `legacy_provenance_artifact` | ne pas écrire |
+| ∈ PRIVATE_SELLER_PATTERNS | `placeholder` | `private_seller_not_eligible` | `private_seller` | ne pas écrire |
+| ∈ DEALER_PLACEHOLDERS | `placeholder` | `seller_unknown` | `placeholder` | ne pas écrire |
+| Existing `manual` | — | — | `already_set` | ne pas écrire |
+| Existing real dealer + confiance < 0.85 | — | — | `quality_too_low` | ne pas écrire |
+| Sinon | `verified`/`inferred` | `eligible_professional_seller` | — | écriture |
 
-Cette liste remplace le regex hard-codé dans 3 fichiers. Pour ajouter un pattern Mobile.de, on l'ajoute dans la liste correspondante, sans toucher aux endpoints.
+**Propriété `isLegacyProvenance`** : retournée par `normalizeDealer` pour identifier les véhicules à traiter par le script de migration.
+
+### ImporteMoi — anomalie de modélisation, pas une règle métier
+
+ImporteMoi était une source concurrente dont le site était scrapé. Avoir `dealer = "ImporteMoi"` est une **erreur de modélisation historique** : ce nom ne désigne pas un vendeur.
+
+```
+ImporteMoi ≠ concessionnaire
+ImporteMoi ≠ particulier
+ImporteMoi = anomalie legacy de provenance
+```
+
+**Plan de migration :**
+
+```
+1. Script de détection :
+   db.vehicles.find({ dealer: /importemoi/i })
+
+2. Migration :
+   - dealer = null  (le champ ne doit pas mentir)
+   - sourcePlatform = 'importemoi.fr'  (conserver la provenance)
+   → Lors du prochain enrichissement AS24, le vrai dealer sera écrit
+
+3. Après migration : supprimer LEGACY_PROVENANCE_ARTIFACTS, le skipReason
+   'legacy_provenance_artifact', et tous les tests @legacy
+```
+
+Pour ajouter un pattern d'une nouvelle source, l'ajouter dans la liste correspondante sans toucher aux endpoints.
 
 ---
 
@@ -397,7 +429,7 @@ if (source === 'mobile.de') {
 Avec la couche de normalisation :
 
 1. Ajouter `'mobile.de'` à `DataSource`
-2. Ajouter les patterns placeholder Mobile.de dans `DEALER_PLACEHOLDERS` de `normalizeDealer.ts`
+2. Ajouter les patterns placeholder Mobile.de dans `DEALER_PLACEHOLDERS` ou `PRIVATE_SELLER_PATTERNS` selon le cas dans `normalizeDealer.ts`
 3. Ajouter la validation d'URL CDN Mobile.de dans `normalizeImages.ts`
 4. Créer un adaptateur `src/lib/adapters/mobile-de.ts` qui convertit les données brutes Mobile.de en `IncomingVehicleData`
 
@@ -509,5 +541,5 @@ Pour rester cohérente avec le principe de responsabilité unique :
 | `DataQuality` comme enum string | Lisible dans les logs, sérialisable en JSON, extensible |
 | `skipReason` dans `NormalizedField` plutôt que dans un champ séparé | Colocation : la raison suit la valeur |
 | Orchestrateur `normalizeVehicle` retourne un `patch` complet | Les endpoints restent sans logique ; ils font `payload.update(patch)` |
-| Liste `DEALER_PLACEHOLDERS` centralisée | Un seul endroit pour étendre les patterns sans toucher aux endpoints |
+| Trois listes séparées (private / placeholder / legacy) | Chaque liste a une sémantique précise, pas de mélange entre particuliers, placeholders et anomalies historiques |
 | Adaptateur par source (futur) | Découplage source → normalisation → persistence |

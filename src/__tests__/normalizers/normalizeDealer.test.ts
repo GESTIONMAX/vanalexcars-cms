@@ -83,39 +83,102 @@ describe('normalizeDealer — éligibilité', () => {
   })
 })
 
-// ─── Placeholders — séparés des particuliers ─────────────────────────────────
+// ─── Artefacts de provenance legacy (ImporteMoi) ─────────────────────────────
+// ImporteMoi était une ancienne source scrapée — jamais un concessionnaire.
+// Avoir dealer = "ImporteMoi" est une erreur de modélisation historique.
+// Ces tests garantissent que cette anomalie est traitée comme telle, pas comme
+// une règle métier permanente.
 
-describe('normalizeDealer — placeholders historiques', () => {
-  it('"ImporteMoi" classé placeholder + seller_unknown (pas private_seller)', () => {
+describe('normalizeDealer — ImporteMoi : artefact de provenance legacy', () => {
+  it('"ImporteMoi" n\'est jamais classé comme concessionnaire', () => {
     const result = normalizeDealer(
       { name: 'ImporteMoi', source: 'autoscout24.import' },
     )
-    expect(result.eligibility).toBe('seller_unknown')
-    expect(result.name.value).toBeNull()
-    expect(result.name.quality).toBe('placeholder')
-    expect(result.name.skipReason).toBe('placeholder')
-    // ImporteMoi n'est PAS un particulier
-    expect(result.name.skipReason).not.toBe('private_seller')
-    expect(result.eligibility).not.toBe('private_seller_not_eligible')
+    expect(result.eligibility).not.toBe('eligible_professional_seller')
+    expect(result.name.value).toBeNull() // ne jamais écrire "ImporteMoi" en base
   })
 
-  it('"importemoi.fr" (sous-chaîne) classé placeholder', () => {
+  it('"ImporteMoi" n\'est jamais classé comme particulier', () => {
+    const result = normalizeDealer(
+      { name: 'ImporteMoi', source: 'autoscout24.import' },
+    )
+    expect(result.eligibility).not.toBe('private_seller_not_eligible')
+    expect(result.name.skipReason).not.toBe('private_seller')
+  })
+
+  it('"ImporteMoi" est classé comme anomalie legacy de provenance', () => {
+    const result = normalizeDealer(
+      { name: 'ImporteMoi', source: 'autoscout24.import' },
+    )
+    expect(result.name.skipReason).toBe('legacy_provenance_artifact')
+    expect(result.isLegacyProvenance).toBe(true)
+    expect(result.eligibility).toBe('seller_unknown')
+  })
+
+  it('"importemoi.fr" (variante URL) : même traitement legacy', () => {
     const result = normalizeDealer(
       { name: 'importemoi.fr', source: 'autoscout24.import' },
     )
+    expect(result.name.skipReason).toBe('legacy_provenance_artifact')
+    expect(result.isLegacyProvenance).toBe(true)
     expect(result.eligibility).toBe('seller_unknown')
-    expect(result.name.skipReason).toBe('placeholder')
   })
 
-  it('"N/A" classé placeholder + seller_unknown', () => {
+  it('un vrai dealer AS24 peut remplacer une ancienne valeur ImporteMoi en base', () => {
+    const result = normalizeDealer(
+      { name: 'Mercedes-Benz Hamburg GmbH', source: 'autoscout24.nextdata' },
+      { name: 'ImporteMoi', quality: undefined }, // valeur historique en base
+    )
+    // ImporteMoi existant n'est pas protégé → le vrai dealer peut le remplacer
+    expect(result.name.value).toBe('Mercedes-Benz Hamburg GmbH')
+    expect(result.eligibility).toBe('eligible_professional_seller')
+    expect(result.isLegacyProvenance).toBe(false)
+  })
+
+  it('même avec une faible confiance DOM, le dealer réel écrase ImporteMoi', () => {
+    const result = normalizeDealer(
+      { name: 'AutoHaus Berlin', source: 'autoscout24.dom' },
+      { name: 'ImporteMoi', quality: undefined },
+    )
+    // ImporteMoi n'est pas un "vrai dealer protégé" → pas de protection basse confiance
+    expect(result.name.value).toBe('AutoHaus Berlin')
+  })
+
+  it('isLegacyProvenance = false pour un dealer normal', () => {
+    const result = normalizeDealer(
+      { name: 'Porsche Zentrum Frankfurt', source: 'autoscout24.nextdata' },
+    )
+    expect(result.isLegacyProvenance).toBe(false)
+  })
+
+  it('isLegacyProvenance = false pour un particulier', () => {
+    const result = normalizeDealer(
+      { name: 'Privat', source: 'autoscout24.nextdata' },
+    )
+    expect(result.isLegacyProvenance).toBe(false)
+  })
+
+  it('isLegacyProvenance = false pour un dealer absent', () => {
+    const result = normalizeDealer(
+      { name: undefined, source: 'autoscout24.nextdata' },
+    )
+    expect(result.isLegacyProvenance).toBe(false)
+  })
+})
+
+// ─── Placeholders génériques — séparés des artefacts legacy ──────────────────
+
+describe('normalizeDealer — placeholders génériques', () => {
+  it('"N/A" classé placeholder générique + seller_unknown', () => {
     const result = normalizeDealer(
       { name: 'N/A', source: 'autoscout24.dom' },
     )
     expect(result.eligibility).toBe('seller_unknown')
     expect(result.name.skipReason).toBe('placeholder')
+    expect(result.isLegacyProvenance).toBe(false)
   })
 
-  it('"À renseigner" classé placeholder + seller_unknown', () => {
+  it('"À renseigner" classé placeholder générique + seller_unknown', () => {
     const result = normalizeDealer(
       { name: 'À renseigner', source: 'autoscout24.dom' },
     )
