@@ -180,11 +180,26 @@ async function scrapeListingPage(url: string): Promise<ScrapedVehicle | null> {
     // Fallback DOM si toujours absent
     if (!year) {
       const domYear = await page.evaluate((): number => {
-        const text = document.body.innerText
-        const m = text.match(/\b(Erstzulassung|First registration|Mise en circulation)[^\d]*(0[1-9]|1[0-2])[\/.](20\d{2}|19\d{2})/)
-        if (m) return parseInt(m[3], 10)
-        const y = text.match(/\b(20[12]\d)\b/)
-        return y ? parseInt(y[1], 10) : 0
+        // 1. Chercher dans les éléments <dt>/<dd> ou data-testid
+        const labels = Array.from(document.querySelectorAll('dt, [data-testid], th, .sc-expandable-field__label, .cldt-stage-primary-keyfact'))
+        for (const el of labels) {
+          const text = el.textContent?.toLowerCase() ?? ''
+          if (text.includes('erstzulassung') || text.includes('first reg') || text.includes('mise en circ')) {
+            // Chercher la valeur associée (sibling ou next element)
+            const val = (el.nextElementSibling ?? el.parentElement?.nextElementSibling)?.textContent ?? ''
+            const m = val.match(/(0[1-9]|1[0-2])[\/.-](20\d{2}|19\d{2})/)
+            if (m) return parseInt(m[2], 10)
+            const y = val.match(/\b(20\d{2}|19\d{2})\b/)
+            if (y) return parseInt(y[1], 10)
+          }
+        }
+        // 2. Scan général du texte visible
+        const body = document.body.innerText
+        const m = body.match(/Erstzulassung[^\d]*(0[1-9]|1[0-2])[\/.-](20\d{2}|19\d{2})/)
+        if (m) return parseInt(m[2], 10)
+        // 3. Toute année entre 2010 et 2026 mentionnée sur la page
+        const years = [...body.matchAll(/\b(20(?:1[0-9]|2[0-6]))\b/g)].map(x => parseInt(x[1], 10))
+        return years.length ? Math.min(...years) : 0
       })
       if (domYear) year = domYear
     }
