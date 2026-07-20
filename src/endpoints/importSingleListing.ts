@@ -55,8 +55,7 @@ function mapFuel(fuel: string): string {
   if (f.includes('plugin') || f.includes('plug-in') || f.includes('phev')) return 'plugin-hybrid'
   if (f.includes('hybrid')) return 'hybrid'
   if (f.includes('diesel')) return 'diesel'
-  if (f.includes('benzin') || f.includes('essence') || f.includes('petrol') || f.includes('gasoline')) return 'petrol'
-  if (f.includes('gas') || f.includes('gpl') || f.includes('lpg') || f.includes('cng')) return 'gas'
+  if (f.includes('benzin') || f.includes('essence') || f.includes('petrol') || f.includes('gasoline') || f.includes('gas')) return 'essence'
   return 'other'
 }
 
@@ -69,12 +68,13 @@ function mapTransmission(t: string): string {
 
 function mapBodyType(b: string): string {
   const s = b.toLowerCase()
-  if (s.includes('cabrio') || s.includes('roadster') || s.includes('convert')) return 'cabriolet'
+  if (s.includes('cabrio') || s.includes('roadster') || s.includes('convert')) return 'convertible'
   if (s.includes('suv') || s.includes('offroad') || s.includes('4x4')) return 'suv'
   if (s.includes('coup')) return 'coupe'
-  if (s.includes('break') || s.includes('kombi') || s.includes('estate') || s.includes('wagon')) return 'break'
+  if (s.includes('break') || s.includes('kombi') || s.includes('estate') || s.includes('wagon') || s.includes('touring')) return 'wagon'
   if (s.includes('berline') || s.includes('limousine') || s.includes('sedan')) return 'sedan'
   if (s.includes('van') || s.includes('minivan') || s.includes('monospace')) return 'van'
+  if (s.includes('sportback') || s.includes('sport back')) return 'sportback'
   return 'other'
 }
 
@@ -314,11 +314,11 @@ export const importSingleListingHandler: PayloadHandler = async (req): Promise<R
       title: scraped.title,
       brand: scraped.brand,
       model: scraped.model,
-      year: scraped.year || undefined,
-      price: scraped.price || undefined,
-      mileage: scraped.mileage || undefined,
-      fuel: scraped.fuel || undefined,
-      transmission: scraped.transmission || undefined,
+      year: scraped.year > 0 ? scraped.year : undefined,
+      price: scraped.price > 0 ? scraped.price : undefined,
+      mileage: scraped.mileage > 0 ? scraped.mileage : 0,
+      fuel: scraped.fuel || 'other',
+      transmission: scraped.transmission || 'other',
       bodyType: scraped.bodyType || undefined,
       power: scraped.power || undefined,
       exteriorColor: scraped.exteriorColor || undefined,
@@ -334,7 +334,7 @@ export const importSingleListingHandler: PayloadHandler = async (req): Promise<R
       sourceKey: sourceKey || undefined,
       originalListingUrl: canonicalUrl || listingUrl,
       sourceUrl: listingUrl,
-      status: 'available',
+      status: 'active',
     }
 
     if (existing) {
