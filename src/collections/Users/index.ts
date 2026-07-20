@@ -24,7 +24,6 @@ export const Users: CollectionConfig = {
     {
       name: 'role',
       type: 'select',
-      required: true,
       defaultValue: 'admin',
       saveToJWT: true,
       options: [
