@@ -62,7 +62,7 @@ Les endpoints et scripts ne font plus que :
 type DataQuality =
   | 'verified'     // Vérifiée sur une source primaire fiable (AS24 __NEXT_DATA__, JSON-LD)
   | 'inferred'     // Déduite par heuristique (DOM scraping, regex)
-  | 'placeholder'  // Valeur de remplissage reconnue comme non fiable
+  | 'placeholder'  // Valeur de remplissage reconnue comme non fiable (ex: ImporteMoi)
   | 'missing'      // Champ absent ou vide dans la source
   | 'manual'       // Saisie manuellement dans l'admin CMS
 ```
@@ -82,6 +82,30 @@ type DataSource =
   | 'admin'                  // Saisie CMS
   | 'unknown'
 ```
+
+### 3b-bis. `VehicleEligibilityReason` — éligibilité à l'import
+
+Le catalogue VanalexCars est strictement réservé aux véhicules de **concessionnaires ou vendeurs professionnels**. Les annonces de particuliers ne doivent pas être importées.
+
+```typescript
+type VehicleEligibilityReason =
+  | 'eligible_professional_seller'    // Concessionnaire ou vendeur pro identifié
+  | 'private_seller_not_eligible'     // Annonce explicitement d'un particulier → rejet
+  | 'seller_unknown'                  // Dealer absent, placeholder, ou non identifiable
+                                      // → NE PAS rejeter automatiquement (pas de preuve)
+```
+
+**Distinctions critiques :**
+
+| Valeur dealer | Classification | Motif | Action import |
+|---------------|---------------|-------|---------------|
+| `"BMW München GmbH"` | `eligible_professional_seller` | Nom de concessionnaire reconnu | Autorisé |
+| `"AutoHaus Berlin"` | `eligible_professional_seller` | Vendeur professionnel | Autorisé |
+| `"Particulier"`, `"Privat"`, `"Privé"` | `private_seller_not_eligible` | Indication explicite de vente entre particuliers | **Rejeté** |
+| `"ImporteMoi"`, `"N/A"`, `"À renseigner"` | `seller_unknown` | Placeholder hérité — origine inconnue | Autorisé (neutre) |
+| vide / absent | `seller_unknown` | Aucune information | Autorisé (neutre) |
+
+**Règle pour les véhicules existants :** si un véhicule déjà importé est identifié comme particulier pendant un enrichissement (ex. AS24 affiche "Privat"), ne pas le désactiver automatiquement. Retourner `eligibility: 'private_seller_not_eligible'` dans la `NormalizationResult` pour que la logique métier aval décide.
 
 ### 3c. `NormalizedField<T>` — résultat d'un normaliseur
 
@@ -114,6 +138,7 @@ interface NormalizedField<T> {
     | 'quality_too_low'    // Qualité de la valeur entrante inférieure à l'existant
     | 'validation_failed'  // Valeur hors plage, format invalide, etc.
     | 'placeholder'        // Valeur reconnue comme placeholder à ne pas persister
+    | 'private_seller'     // Annonce de particulier — ne pas écrire comme dealer
 
   /** Valeur brute avant normalisation (pour debugging) */
   raw?: unknown
@@ -144,38 +169,51 @@ interface MergeDecision {
 ```typescript
 function normalizeDealer(
   incoming: { name?: string; city?: string; source: DataSource },
-  existing?: { name?: string; quality?: DataQuality }
+  existing?: { name?: string | null; city?: string | null; quality?: DataQuality }
 ): {
   name: NormalizedField<string>
   city: NormalizedField<string>
+  eligibility: VehicleEligibilityReason
 }
 ```
 
-**Règles internes (exemples) :**
-
-| Condition | Qualité assignée | Action |
-|-----------|-----------------|--------|
-| `incoming.name` est vide ou undefined | `missing` | `skipReason: 'source_empty'` |
-| `incoming.name` correspond à un pattern placeholder connu | `placeholder` | `skipReason: 'placeholder'` |
-| `existing.quality === 'manual'` | — | `skipReason: 'already_set'` (la saisie admin prime toujours) |
-| `existing.quality === 'verified'` et `incoming.quality === 'inferred'` | — | `skipReason: 'quality_too_low'` |
-| Sinon | `verified` ou `inferred` selon la source | `action: 'write'` |
-
-**Patterns placeholder** — liste centralisée, extensible :
+**Deux listes distinctes — ne pas confondre :**
 
 ```typescript
+// Annonces de particuliers → inéligibles à l'import (rejet explicite)
+const PRIVATE_SELLER_PATTERNS = [
+  /^particulier$/i,
+  /^privat(verkauf)?$/i,   // allemand
+  /^privé$/i,
+  /^private(\s+seller)?$/i,
+  /^vendeur\s+particulier$/i,
+  /^privatperson$/i,
+]
+
+// Placeholders hérités d'intermédiaires → qualité 'placeholder', pas de rejet
+// (l'origine réelle — pro ou particulier — n'est pas connue)
 const DEALER_PLACEHOLDERS = [
   /importemoi/i,
   /^n\/a$/i,
   /^à renseigner$/i,
   /^inconnu$/i,
-  /^particulier$/i,
-  /^privat$/i,         // allemand
-  /^privé$/i,
+  /^unknown$/i,
+  /^-+$/,
 ]
 ```
 
-Cette liste remplace le regex hard-codé dans 3 fichiers. Pour ajouter un nouveau pattern (ex. « mobile.de placeholder »), on ajoute une entrée ici, sans toucher aux endpoints.
+**Règles internes :**
+
+| Condition | Qualité | Eligibilité | Action |
+|-----------|---------|-------------|--------|
+| `incoming.name` vide | `missing` | `seller_unknown` | `source_empty` |
+| `incoming.name` ∈ PRIVATE_SELLER_PATTERNS | `placeholder` | `private_seller_not_eligible` | `private_seller` — ne pas écrire |
+| `incoming.name` ∈ DEALER_PLACEHOLDERS | `placeholder` | `seller_unknown` | `placeholder` — ne pas écrire |
+| `existing.quality === 'manual'` | — | `eligible_professional_seller` | `already_set` |
+| Existing protégé (non-placeholder, non-vide) + incoming inféré | — | — | `quality_too_low` |
+| Sinon | `verified` ou `inferred` | `eligible_professional_seller` | écriture |
+
+Cette liste remplace le regex hard-codé dans 3 fichiers. Pour ajouter un pattern Mobile.de, on l'ajoute dans la liste correspondante, sans toucher aux endpoints.
 
 ---
 
@@ -285,6 +323,12 @@ interface NormalizationResult {
   appliedFields: string[]
   /** true si le patch est vide (rien à écrire) */
   noop: boolean
+  /**
+   * Éligibilité du vendeur — à vérifier par l'appelant avant tout import.
+   * 'private_seller_not_eligible' → ne pas créer le véhicule en base.
+   * 'seller_unknown' → neutre, ne pas rejeter sans preuve.
+   */
+  eligibility: VehicleEligibilityReason
 }
 
 function normalizeVehicle(
