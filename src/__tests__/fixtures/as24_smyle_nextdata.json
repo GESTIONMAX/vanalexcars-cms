@@ -1,0 +1,29 @@
+{
+  "props": {
+    "pageProps": {
+      "properData": {
+        "carDetails": {
+          "make": "BMW",
+          "model": "420",
+          "price": {
+            "gross": 28900
+          },
+          "originalSellerCompanyName": "smyle",
+          "ocsInfo": {
+            "seller": {
+              "id": "99990002",
+              "companyName": "Musterhändler Automobile GmbH",
+              "contactName": "Team Gebrauchtwagen"
+            },
+            "location": {
+              "countryCode": "DE",
+              "zip": "20095",
+              "city": "Hamburg",
+              "street": "Musterallee 42"
+            }
+          }
+        }
+      }
+    }
+  }
+}

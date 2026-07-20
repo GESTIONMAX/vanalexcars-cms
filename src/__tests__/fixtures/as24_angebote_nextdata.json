@@ -1,0 +1,33 @@
+{
+  "props": {
+    "pageProps": {
+      "listingDetails": {
+        "seller": {
+          "id": 99990001,
+          "isDealer": true,
+          "type": "Dealer",
+          "companyName": "Autohaus Muster GmbH",
+          "contactName": "Max Mustermann"
+        },
+        "location": {
+          "countryCode": "DE",
+          "zip": "10115",
+          "city": "Berlin",
+          "street": "Musterstraße 1"
+        },
+        "vehicle": {
+          "make": "Fiat",
+          "model": "500e"
+        },
+        "prices": {
+          "public": {
+            "priceRaw": 25900
+          }
+        },
+        "mileage": {
+          "value": 42000
+        }
+      }
+    }
+  }
+}
